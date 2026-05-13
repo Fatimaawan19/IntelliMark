@@ -37,6 +37,8 @@ const ViewReport = () => {
   const [payload, setPayload] = useState<any>(null);
   const reportRef = useRef<HTMLDivElement | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [scoreBreakdown, setScoreBreakdown] = useState<any>(null);
+  const [scoreLoading, setScoreLoading] = useState(false);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (u) => setStudentId(u?.uid || ""));
@@ -67,6 +69,28 @@ const ViewReport = () => {
     };
     run();
   }, [submissionId, studentId]);
+
+  // Fetch score breakdown (consistent scoring with plagiarism penalty)
+  useEffect(() => {
+    const fetchScoreBreakdown = async () => {
+      if (!submissionId) return;
+      setScoreLoading(true);
+      try {
+        const res = await fetch(
+          `http://localhost:5000/api/plagiarism/score-breakdown/${encodeURIComponent(submissionId)}`
+        );
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && data?.scoreBreakdown) {
+          setScoreBreakdown(data.scoreBreakdown);
+        }
+      } catch (e: any) {
+        console.warn("Failed to load score breakdown:", e?.message);
+      } finally {
+        setScoreLoading(false);
+      }
+    };
+    fetchScoreBreakdown();
+  }, [submissionId]);
 
   const header = payload?.submission || null;
   const submissionRaw = payload?.submissionRaw || null;
@@ -265,6 +289,181 @@ const ViewReport = () => {
           <Separator className="my-8" />
 
           <div className="grid gap-6">
+            {scoreBreakdown && (
+              <Card className="report-card border-primary/10 shadow-none">
+                <CardHeader>
+                  <CardTitle className="text-lg">Score Breakdown</CardTitle>
+                  <CardDescription>Detailed explanation of your grade with plagiarism penalty</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-6">
+                  {/* FINAL SCORE - Prominent display */}
+                  <div className="rounded-lg bg-gradient-to-r from-blue-50 to-indigo-50 p-6 border border-blue-200">
+                    <div className="flex justify-between items-center mb-2">
+                      <span className="text-lg font-bold text-foreground">Final Score</span>
+                      <span className="text-4xl font-bold text-blue-600">
+                        {scoreBreakdown.finalScore?.afterPenalty || 0} / {scoreBreakdown.finalScore?.maxScore || 10}
+                      </span>
+                    </div>
+                    <div className="text-sm text-muted-foreground">
+                      {scoreBreakdown.finalScore?.percentage?.toFixed(1) || 0}% ({scoreBreakdown.finalScore?.letterGrade || "—"})
+                    </div>
+                  </div>
+
+                  {/* AI GRADING SCORE */}
+                  <div className="space-y-2">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-semibold text-foreground">AI Grading Score</h4>
+                        <p className="text-sm text-muted-foreground">
+                          {scoreBreakdown.transparency?.scoreBreakdown?.aiGrade?.explanation}
+                        </p>
+                      </div>
+                      <Badge className="text-lg px-3 py-1 bg-green-100 text-green-900">
+                        {scoreBreakdown.grading?.aiScore}/10
+                      </Badge>
+                    </div>
+                  </div>
+
+                  {/* PLAGIARISM DETECTION */}
+                  <div className="space-y-3 pt-4 border-t">
+                    <h4 className="font-semibold text-foreground">Plagiarism Detection</h4>
+
+                    {/* Internal Plagiarism */}
+                    <div className="ml-4 space-y-2">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-foreground">Student-to-Student Matching (FAISS)</p>
+                          <p className="text-xs text-muted-foreground">
+                            {scoreBreakdown.transparency?.scoreBreakdown?.plagiarismDetection?.internal?.explanation}
+                          </p>
+                        </div>
+                        <Badge variant="outline">{scoreBreakdown.plagiarism?.internal?.score || 0}%</Badge>
+                      </div>
+
+                      {/* Show matching students if any */}
+                      {scoreBreakdown.plagiarism?.internal?.topMatches && scoreBreakdown.plagiarism?.internal?.topMatches.length > 0 && (
+                        <div className="ml-2 space-y-1 text-xs bg-orange-50 p-3 rounded border border-orange-100">
+                          <p className="font-medium text-orange-900">Top Matching Students:</p>
+                          {scoreBreakdown.plagiarism?.internal?.topMatches.map((match: any, idx: number) => (
+                            <div key={idx} className="text-orange-800">
+                              {idx + 1}. {match.studentName} ({match.similarity}% similar)
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* External Plagiarism (Online Sources / AI Detection) */}
+                    <div className="ml-4 space-y-2">
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <p className="text-sm font-medium text-foreground">
+                            {scoreBreakdown.plagiarism?.external?.provider === 'zerogpt' ? 'AI-Generated Content Detection' : 'Online Source Detection (via RapidAPI)'}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            {scoreBreakdown.transparency?.scoreBreakdown?.plagiarismDetection?.external?.explanation}
+                          </p>
+                        </div>
+                        <Badge variant="outline">{scoreBreakdown.plagiarism?.external?.score || 0}%</Badge>
+                      </div>
+
+                      {/* Show external sources if any */}
+                      {scoreBreakdown.plagiarism?.external?.sources && scoreBreakdown.plagiarism?.external?.sources.length > 0 && (
+                        <div className="ml-2 space-y-2 text-xs bg-red-50 p-3 rounded border border-red-100">
+                          <p className="font-medium text-red-900">🔗 Detected Online Sources:</p>
+                          {scoreBreakdown.plagiarism?.external?.sources.map((source: any, idx: number) => (
+                            <div key={idx} className="text-red-800 space-y-1">
+                              <div className="font-medium">
+                                {idx + 1}. {source.title || 'Unknown Source'}
+                              </div>
+                              {source.matchPercentage && (
+                                <div className="text-red-700">
+                                  Match: {source.matchPercentage}%
+                                </div>
+                              )}
+                              {source.url && (
+                                <div className="text-red-600 break-all hover:text-red-700 cursor-pointer">
+                                  📍 {source.url}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Combined Score */}
+                    <div className="ml-4 p-3 bg-gray-50 rounded space-y-1 border border-gray-200">
+                      <p className="text-sm font-medium text-foreground">Overall Plagiarism Score</p>
+                      <p className="text-xs text-muted-foreground">
+                        {scoreBreakdown.transparency?.scoreBreakdown?.plagiarismDetection?.combined?.explanation}
+                      </p>
+                      <code className="text-xs bg-gray-200 px-2 py-1 rounded block mt-1 text-gray-800">
+                        {scoreBreakdown.transparency?.scoreBreakdown?.plagiarismDetection?.combined?.formula}
+                      </code>
+                      <div className="text-lg font-bold text-gray-700 mt-2">
+                        = {scoreBreakdown.plagiarism?.overallScore || 0}%
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* PENALTY APPLICATION */}
+                  <div className="space-y-3 pt-4 border-t">
+                    <h4 className="font-semibold text-foreground">Penalty Application</h4>
+
+                    <div className="p-3 rounded bg-amber-50 border border-amber-200 space-y-2">
+                      <div className="flex justify-between items-center">
+                        <span className="text-sm font-medium text-amber-900">Plagiarism Band:</span>
+                        <Badge className="bg-amber-200 text-amber-900">
+                          {scoreBreakdown.penalty?.band}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-amber-900">
+                        {scoreBreakdown.transparency?.scoreBreakdown?.penaltyApplication?.reason}
+                      </p>
+                      <p className="text-sm font-medium text-amber-900">
+                        Penalty: {scoreBreakdown.penalty?.penaltyPercent}%
+                      </p>
+                      <code className="text-xs bg-amber-100 px-2 py-1 rounded block text-amber-900">
+                        {scoreBreakdown.transparency?.scoreBreakdown?.penaltyApplication?.calculation}
+                      </code>
+                    </div>
+                  </div>
+
+                  {/* SCORE CALCULATION SUMMARY */}
+                  <div className="space-y-3 pt-4 border-t bg-slate-50 p-4 rounded border border-slate-200">
+                    <h4 className="font-semibold text-foreground">Score Calculation Summary</h4>
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span>AI Grade:</span>
+                        <span className="font-medium">{scoreBreakdown.finalScore?.beforePenalty}/10</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span>Plagiarism Penalty ({scoreBreakdown.penalty?.penaltyPercent}%):</span>
+                        <span className="font-medium text-red-600">
+                          {scoreBreakdown.finalScore?.penalty?.toFixed(1)}
+                        </span>
+                      </div>
+                      <div className="border-t pt-2 flex justify-between font-bold text-base">
+                        <span>Final Score:</span>
+                        <span className="text-blue-600">
+                          {scoreBreakdown.finalScore?.afterPenalty}/{scoreBreakdown.finalScore?.maxScore}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* STUDENT FEEDBACK */}
+                  <div className="p-4 rounded bg-blue-50 border border-blue-200">
+                    <h4 className="font-semibold text-foreground mb-2">Feedback</h4>
+                    <p className="text-sm text-blue-900">
+                      {scoreBreakdown.transparency?.studentFeedback}
+                    </p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             <Card className="report-card border-primary/10 shadow-none">
               <CardHeader>
                 <CardTitle className="text-lg">Submission File</CardTitle>
@@ -301,16 +500,55 @@ const ViewReport = () => {
             {String(header?.assessmentType || "").toLowerCase() === "assignment" ? (
               <Card className="report-card border-primary/10 shadow-none">
                 <CardHeader>
-                  <CardTitle className="text-lg">Plagiarism Check</CardTitle>
-                  <CardDescription>Similarity against other students for this assessment</CardDescription>
+                  <CardTitle className="text-lg">Plagiarism & AI Detection</CardTitle>
+                  <CardDescription>Similarity check, AI-generated content analysis, and external sources</CardDescription>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="space-y-3">
                   <div className="flex items-center justify-between gap-3 rounded-lg border border-primary/10 bg-white p-4">
-                    <div className="text-sm text-muted-foreground">Best match</div>
+                    <div className="text-sm text-muted-foreground">Student submission match (Internal)</div>
                     <Badge variant={Number(plagiarismPercent || 0) >= 70 ? "destructive" : "outline"} className="text-base">
                       {plagiarismPercent == null ? "—" : `${plagiarismPercent}%`}
                     </Badge>
                   </div>
+                  {Number(header?.plagiarismAiScore || 0) > 0 ? (
+                    <div className="flex items-center justify-between gap-3 rounded-lg border border-amber-200 bg-amber-50 p-4">
+                      <div className="text-sm text-amber-900">AI-generated content detected</div>
+                      <Badge variant="outline" className="text-base bg-amber-100 text-amber-900 border-amber-200">
+                        {Number(header?.plagiarismAiScore || 0)}%
+                      </Badge>
+                    </div>
+                  ) : null}
+
+                  {/* External Plagiarised Sources */}
+                  {payload?.plagiarismReport?.sources && payload?.plagiarismReport?.sources.length > 0 ? (
+                    <div className="space-y-2 rounded-lg border border-red-200 bg-red-50 p-4">
+                      <div className="text-sm font-semibold text-red-900">🔗 Detected Online Sources</div>
+                      <ul className="space-y-2">
+                        {payload.plagiarismReport.sources.slice(0, 5).map((source: any, idx: number) => (
+                          <li key={idx} className="text-xs text-red-800">
+                            <div className="font-medium">
+                              {idx + 1}. {source.title || 'Unknown Source'}
+                            </div>
+                            {source.url && (
+                              <div className="text-red-600 break-all hover:text-red-700 cursor-pointer mt-1">
+                                📍 {source.url}
+                              </div>
+                            )}
+                            {source.matchPercentage && (
+                              <div className="text-red-700 mt-1">
+                                Match: {source.matchPercentage}%
+                              </div>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                      {payload.plagiarismReport.sources.length > 5 && (
+                        <p className="text-xs text-red-700 mt-2">
+                          ... and {payload.plagiarismReport.sources.length - 5} more sources
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
                 </CardContent>
               </Card>
             ) : null}

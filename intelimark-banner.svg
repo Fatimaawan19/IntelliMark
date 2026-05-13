@@ -1,0 +1,247 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  InteliMark FYP Panaflex Banner — 6 ft × 3 ft (1800 × 900 px at 300 dpi rendered at 25%)
+  Print at 300 dpi minimum. Aspect ratio 2:1.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 900" width="1800" height="900">
+
+  <!-- ============ Gradient background ============ -->
+  <defs>
+    <linearGradient id="bgGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"  stop-color="#0b1437"/>
+      <stop offset="55%" stop-color="#1e1b6e"/>
+      <stop offset="100%" stop-color="#3b1d8a"/>
+    </linearGradient>
+
+    <linearGradient id="titleGrad" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%"   stop-color="#a78bfa"/>
+      <stop offset="50%"  stop-color="#22d3ee"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+
+    <linearGradient id="robotBody" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"  stop-color="#e2e8f0"/>
+      <stop offset="100%" stop-color="#94a3b8"/>
+    </linearGradient>
+
+    <radialGradient id="eyeGlow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%"  stop-color="#67e8f9"/>
+      <stop offset="60%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#0e7490"/>
+    </radialGradient>
+
+    <radialGradient id="halo" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%"  stop-color="#7c3aed" stop-opacity="0.55"/>
+      <stop offset="100%" stop-color="#7c3aed" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <pattern id="grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#ffffff" stroke-opacity="0.04" stroke-width="1"/>
+    </pattern>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1800" height="900" fill="url(#bgGrad)"/>
+  <rect width="1800" height="900" fill="url(#grid)"/>
+
+  <!-- Decorative glow blobs -->
+  <circle cx="200"  cy="200" r="260" fill="url(#halo)"/>
+  <circle cx="1600" cy="700" r="320" fill="url(#halo)"/>
+
+  <!-- Decorative orbit rings -->
+  <g stroke="#a78bfa" stroke-opacity="0.18" fill="none">
+    <ellipse cx="1380" cy="450" rx="380" ry="110" stroke-width="1.5"/>
+    <ellipse cx="1380" cy="450" rx="320" ry="80"  stroke-width="1.5" transform="rotate(20 1380 450)"/>
+  </g>
+
+  <!-- Floating data dots -->
+  <g fill="#22d3ee">
+    <circle cx="1100" cy="220" r="3" opacity="0.9"/>
+    <circle cx="1180" cy="180" r="2" opacity="0.7"/>
+    <circle cx="1700" cy="320" r="3" opacity="0.9"/>
+    <circle cx="1620" cy="160" r="2" opacity="0.6"/>
+    <circle cx="1500" cy="240" r="4" opacity="1"/>
+  </g>
+  <g fill="#34d399">
+    <circle cx="1230" cy="680" r="3" opacity="0.8"/>
+    <circle cx="1550" cy="780" r="2" opacity="0.7"/>
+    <circle cx="1740" cy="600" r="4" opacity="1"/>
+  </g>
+
+  <!-- ============ FYP / University tag (top-left) ============ -->
+  <g transform="translate(80, 70)">
+    <rect width="220" height="44" rx="22" fill="#a78bfa" fill-opacity="0.15" stroke="#a78bfa" stroke-opacity="0.5"/>
+    <text x="110" y="28" text-anchor="middle"
+          font-family="Inter, Arial, sans-serif" font-size="16" font-weight="700"
+          fill="#c4b5fd" letter-spacing="3">FINAL YEAR PROJECT</text>
+  </g>
+
+  <!-- ============ Main title ============ -->
+  <g transform="translate(80, 165)">
+    <text font-family="Inter, Arial, sans-serif" font-size="148" font-weight="900"
+          fill="url(#titleGrad)" filter="url(#glow)">InteliMark</text>
+  </g>
+
+  <!-- Underline accent -->
+  <rect x="80" y="335" width="180" height="6" rx="3" fill="#22d3ee"/>
+
+  <!-- ============ Tagline ============ -->
+  <g transform="translate(80, 395)">
+    <text font-family="Inter, Arial, sans-serif" font-size="34" font-weight="700" fill="#f8fafc">
+      AI-Powered Intelligent Assessment &amp; Grading Platform
+    </text>
+  </g>
+
+  <!-- ============ Key features (left column) ============ -->
+  <g transform="translate(80, 450)" font-family="Inter, Arial, sans-serif">
+    <!-- Feature 1 -->
+    <g transform="translate(0,0)">
+      <circle cx="14" cy="22" r="14" fill="#7c3aed"/>
+      <text x="14" y="28" text-anchor="middle" font-size="18" font-weight="900" fill="#fff">✓</text>
+      <text x="42" y="28" font-size="22" font-weight="700" fill="#e2e8f0">Automatic Marking with LLM-driven Rubrics</text>
+    </g>
+    <!-- Feature 2 -->
+    <g transform="translate(0,52)">
+      <circle cx="14" cy="22" r="14" fill="#06b6d4"/>
+      <text x="14" y="28" text-anchor="middle" font-size="18" font-weight="900" fill="#fff">✓</text>
+      <text x="42" y="28" font-size="22" font-weight="700" fill="#e2e8f0">Real-time CLO Performance Analytics</text>
+    </g>
+    <!-- Feature 3 -->
+    <g transform="translate(0,104)">
+      <circle cx="14" cy="22" r="14" fill="#10b981"/>
+      <text x="14" y="28" text-anchor="middle" font-size="18" font-weight="900" fill="#fff">✓</text>
+      <text x="42" y="28" font-size="22" font-weight="700" fill="#e2e8f0">Personalized AI Study Recommendations</text>
+    </g>
+    <!-- Feature 4 -->
+    <g transform="translate(0,156)">
+      <circle cx="14" cy="22" r="14" fill="#f59e0b"/>
+      <text x="14" y="28" text-anchor="middle" font-size="18" font-weight="900" fill="#fff">✓</text>
+      <text x="42" y="28" font-size="22" font-weight="700" fill="#e2e8f0">OCR + RAG Pipeline for Handwritten Scripts</text>
+    </g>
+  </g>
+
+  <!-- ============ Tech stack pills (bottom-left) ============ -->
+  <g transform="translate(80, 700)" font-family="Inter, Arial, sans-serif">
+    <text font-size="15" font-weight="700" fill="#a78bfa" letter-spacing="3">POWERED BY</text>
+    <g transform="translate(0, 22)">
+      <!-- Pill 1: React -->
+      <g transform="translate(0,0)">
+        <rect width="120" height="44" rx="22" fill="#0ea5e9" fill-opacity="0.15" stroke="#0ea5e9" stroke-opacity="0.6"/>
+        <text x="60" y="28" text-anchor="middle" font-size="17" font-weight="700" fill="#7dd3fc">React + TS</text>
+      </g>
+      <!-- Pill 2: Node -->
+      <g transform="translate(132,0)">
+        <rect width="130" height="44" rx="22" fill="#22c55e" fill-opacity="0.15" stroke="#22c55e" stroke-opacity="0.6"/>
+        <text x="65" y="28" text-anchor="middle" font-size="17" font-weight="700" fill="#86efac">Node.js + Express</text>
+      </g>
+      <!-- Pill 3: Mongo -->
+      <g transform="translate(274,0)">
+        <rect width="110" height="44" rx="22" fill="#10b981" fill-opacity="0.15" stroke="#10b981" stroke-opacity="0.6"/>
+        <text x="55" y="28" text-anchor="middle" font-size="17" font-weight="700" fill="#6ee7b7">MongoDB</text>
+      </g>
+      <!-- Pill 4: Llama -->
+      <g transform="translate(396,0)">
+        <rect width="125" height="44" rx="22" fill="#f97316" fill-opacity="0.15" stroke="#f97316" stroke-opacity="0.6"/>
+        <text x="62.5" y="28" text-anchor="middle" font-size="17" font-weight="700" fill="#fdba74">LLaMA + Groq</text>
+      </g>
+      <!-- Pill 5: FAISS -->
+      <g transform="translate(533,0)">
+        <rect width="135" height="44" rx="22" fill="#a78bfa" fill-opacity="0.18" stroke="#a78bfa" stroke-opacity="0.6"/>
+        <text x="67.5" y="28" text-anchor="middle" font-size="17" font-weight="700" fill="#c4b5fd">FAISS + RAG</text>
+      </g>
+      <!-- Pill 6: Firebase -->
+      <g transform="translate(680,0)">
+        <rect width="100" height="44" rx="22" fill="#fbbf24" fill-opacity="0.18" stroke="#fbbf24" stroke-opacity="0.6"/>
+        <text x="50" y="28" text-anchor="middle" font-size="17" font-weight="700" fill="#fcd34d">Firebase</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- ============ ROBOT MASCOT (right side) ============ -->
+  <g transform="translate(1280, 240)">
+
+    <!-- Halo glow behind robot -->
+    <circle cx="170" cy="280" r="280" fill="url(#halo)"/>
+
+    <!-- Body -->
+    <rect x="80" y="240" width="180" height="180" rx="36" fill="url(#robotBody)" stroke="#cbd5e1" stroke-width="2"/>
+
+    <!-- Chest panel -->
+    <rect x="120" y="290" width="100" height="80" rx="12" fill="#0f172a" stroke="#22d3ee" stroke-width="2"/>
+
+    <!-- Chest dots (data indicator lights) -->
+    <circle cx="140" cy="315" r="6" fill="#22d3ee"/>
+    <circle cx="170" cy="315" r="6" fill="#22d3ee" fill-opacity="0.5"/>
+    <circle cx="200" cy="315" r="6" fill="#22d3ee" fill-opacity="0.25"/>
+
+    <!-- Chest mini graph -->
+    <polyline points="130,355 150,340 170,348 190,330 210,338" fill="none" stroke="#34d399" stroke-width="2.5" stroke-linejoin="round"/>
+
+    <!-- Neck -->
+    <rect x="155" y="215" width="30" height="30" fill="#94a3b8"/>
+    <rect x="148" y="208" width="44" height="14" rx="4" fill="#64748b"/>
+
+    <!-- Head -->
+    <rect x="70" y="80" width="200" height="140" rx="42" fill="url(#robotBody)" stroke="#cbd5e1" stroke-width="2"/>
+
+    <!-- Antenna -->
+    <line x1="170" y1="80" x2="170" y2="40" stroke="#cbd5e1" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="170" cy="30" r="12" fill="#22d3ee" filter="url(#glow)"/>
+    <circle cx="170" cy="30" r="6" fill="#fff"/>
+
+    <!-- Eye visor -->
+    <rect x="92" y="120" width="156" height="56" rx="28" fill="#0f172a"/>
+
+    <!-- Eyes -->
+    <circle cx="135" cy="148" r="18" fill="url(#eyeGlow)" filter="url(#glow)"/>
+    <circle cx="135" cy="148" r="8"  fill="#fff"/>
+    <circle cx="205" cy="148" r="18" fill="url(#eyeGlow)" filter="url(#glow)"/>
+    <circle cx="205" cy="148" r="8"  fill="#fff"/>
+
+    <!-- Smile -->
+    <path d="M 130 195 Q 170 215 210 195" stroke="#0f172a" stroke-width="4" fill="none" stroke-linecap="round"/>
+
+    <!-- Ear circuits -->
+    <rect x="56" y="135" width="14" height="36" rx="4" fill="#64748b"/>
+    <rect x="270" y="135" width="14" height="36" rx="4" fill="#64748b"/>
+
+    <!-- Arms -->
+    <rect x="40" y="270" width="36" height="100" rx="18" fill="#94a3b8" stroke="#cbd5e1" stroke-width="2"/>
+    <rect x="264" y="270" width="36" height="100" rx="18" fill="#94a3b8" stroke="#cbd5e1" stroke-width="2"/>
+
+    <!-- Hands holding tablet -->
+    <circle cx="58"  cy="380" r="20" fill="#cbd5e1"/>
+    <circle cx="282" cy="380" r="20" fill="#cbd5e1"/>
+
+    <!-- Tablet with checkmarks (held in front) -->
+    <rect x="60" y="395" width="220" height="70" rx="10" fill="#1e293b" stroke="#22d3ee" stroke-width="2"/>
+    <rect x="75" y="408" width="60" height="10" rx="3" fill="#22d3ee"/>
+    <rect x="75" y="425" width="120" height="8" rx="3" fill="#475569"/>
+    <rect x="75" y="438" width="90" height="8" rx="3" fill="#475569"/>
+    <!-- Green checkmark on tablet -->
+    <circle cx="245" cy="430" r="20" fill="#10b981"/>
+    <path d="M 235 430 L 243 438 L 257 422" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+    <!-- "AI" badge on head -->
+    <g transform="translate(140, 92)">
+      <rect width="60" height="22" rx="11" fill="#7c3aed"/>
+      <text x="30" y="16" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" font-weight="900" fill="#fff">AI</text>
+    </g>
+
+  </g>
+
+  <!-- Border accent -->
+  <rect x="6" y="6" width="1788" height="888" rx="12" fill="none" stroke="#a78bfa" stroke-opacity="0.25" stroke-width="2"/>
+  <rect x="14" y="14" width="1772" height="872" rx="8" fill="none" stroke="#22d3ee" stroke-opacity="0.15" stroke-width="1"/>
+
+  <!-- Bottom corner mark -->
+  <g transform="translate(1660, 830)" font-family="Inter, Arial, sans-serif">
+    <text x="0" y="0" text-anchor="end" font-size="13" font-weight="600" fill="#94a3b8" letter-spacing="1">SMART · ACCURATE · INSTANT</text>
+  </g>
+
+</svg>

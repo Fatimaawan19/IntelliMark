@@ -115,6 +115,8 @@ const AIGrading = () => {
   const [plagiarismLoading, setPlagiarismLoading] = useState(false);
   const [plagiarismResult, setPlagiarismResult] = useState<any>(null);
   const [plagiarismPhase, setPlagiarismPhase] = useState<string>("");
+  const [plagiarismLogs, setPlagiarismLogs] = useState<string[]>([]);
+  const logsEndRef = useRef<HTMLDivElement>(null);
   const [publishingGrade, setPublishingGrade] = useState(false);
   const [activeTab, setActiveTab] = useState<string>("overview");
   const [showExtractedText, setShowExtractedText] = useState(false);
@@ -953,31 +955,67 @@ const AIGrading = () => {
     }
   };
 
-  const runPlagiarismCheck = async () => {
+  const runPlagiarismCheck = async (forceRefresh = false) => {
     if (!submissionId || !teacherId) return;
     setPlagiarismLoading(true);
+    setPlagiarismLogs([]);
     setPlagiarismPhase("phase1");
+
+    const addLog = (message: string) => {
+      setPlagiarismLogs(prev => [...prev, `${new Date().toLocaleTimeString()} - ${message}`]);
+    };
+
     try {
+      addLog("Starting plagiarism check...");
+
       // Phase 1: ensure we have extracted text loaded in UI
       const extracted = String(content?.extraction?.rawText || "").trim() || String(content?.submissionText || "").trim();
+      addLog(`Text extracted: ${extracted ? "✓ Found (' + extracted.length + ' chars)" : "✗ Not found"}`);
       setPlagiarismPhase(extracted ? "phase2" : "phase1");
 
+      addLog("Calculating internal plagiarism (student-to-student matching)...");
+      setPlagiarismPhase("phase2");
+
+      addLog("Calculating external plagiarism (online sources & AI detection)...");
       const res = await fetch(
         `http://localhost:5000/api/submissions/${encodeURIComponent(submissionId)}/plagiarism-check`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          // Backend returns persisted report unless force=true.
-          body: JSON.stringify({ teacherId }),
+          // Force refresh to recalculate internal + external plagiarism
+          body: JSON.stringify({ teacherId, force: forceRefresh || plagiarismResult ? true : false }),
         }
       );
-      const data = await res.json().catch(() => ({}));
+      let data;
+      try {
+        data = await res.json();
+      } catch (e) {
+        console.error('Failed to parse JSON response:', e);
+        data = {};
+      }
       if (!res.ok || !data?.success) throw new Error(data?.error || `Failed (${res.status})`);
+
       setPlagiarismPhase("phase3");
+      addLog("Combining plagiarism scores (60% internal + 40% external)...");
+      addLog(`✓ Plagiarism check complete!`);
+      addLog(`  Internal: ${data.internalScore || 0}%`);
+      addLog(`  External: ${data.aiScore || 0}%`);
+      addLog(`  Overall: ${data.overallScore || 0}%`);
+      if (data.riskLevel) addLog(`  Risk Level: ${data.riskLevel}`);
+
       setPlagiarismResult(data);
+
+      // Scroll logs to bottom
+      setTimeout(() => {
+        logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, 100);
+
       // Plagiarism check updates grade suggestion server-side; refresh header to reflect new overall score.
+      addLog("Updating overall score...");
       await fetchHeader(teacherId, { silent: true });
+      addLog("✓ Score updated successfully");
     } catch (e: any) {
+      addLog(`✗ Error: ${e?.message || String(e)}`);
       toast({ title: "Plagiarism check failed", description: e?.message || String(e), variant: "destructive" });
       setPlagiarismResult(null);
     } finally {
@@ -1918,32 +1956,77 @@ const AIGrading = () => {
                     <CardContent>
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="text-sm text-muted-foreground">
-                          Compares this student’s extracted text against the top 5 most similar chunks from other students in the same assessment.
+                          Compares student answers against other students in the same assessment.
                         </div>
                         <Button
                           type="button"
-                          onClick={runPlagiarismCheck}
+                          onClick={() => runPlagiarismCheck(plagiarismResult ? true : false)}
                           disabled={plagiarismLoading || isProcessing || loading}
                           className="bg-gradient-primary text-primary-foreground hover:shadow-glow"
                         >
                           {plagiarismLoading
                             ? plagiarismPhase === "phase1"
-                              ? "Phase 1: Found extracted text…"
+                              ? "Phase 1: Extracting text…"
                               : plagiarismPhase === "phase2"
-                                ? "Phase 2: Finding top chunks…"
+                                ? "Phase 2: Calculating internal plagiarism…"
                                 : plagiarismPhase === "phase3"
-                                  ? "Phase 3: Matching with other students…"
+                                  ? "Phase 3: Calculating external plagiarism…"
                                   : "Checking…"
                             : plagiarismResult
-                              ? "Re-run Plagiarism"
+                              ? "Re-run Plagiarism Check"
                               : "Run Plagiarism Check"}
                         </Button>
                       </div>
 
                       <Separator className="my-4" />
 
+                      {/* Plagiarism Check Logs */}
+                      {plagiarismLogs.length > 0 && (
+                        <div className="space-y-2 mb-4">
+                          <div className="text-sm font-semibold text-gray-900">Plagiarism Check Logs</div>
+                          <div className="rounded-lg border border-primary/10 bg-slate-50 p-3 max-h-40 overflow-y-auto font-mono text-xs text-slate-700 space-y-1">
+                            {plagiarismLogs.map((log, idx) => (
+                              <div key={idx} className="text-slate-600">
+                                {log.includes('✓') ? (
+                                  <span className="text-green-600">{log}</span>
+                                ) : log.includes('✗') ? (
+                                  <span className="text-red-600">{log}</span>
+                                ) : (
+                                  log
+                                )}
+                              </div>
+                            ))}
+                            <div ref={logsEndRef} />
+                          </div>
+                        </div>
+                      )}
+
                       {plagiarismResult ? (
                         <div className="space-y-3">
+                          {/* Overall Plagiarism Score */}
+                          <div className="rounded-lg border border-primary/20 bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
+                            <div className="text-xs font-semibold text-muted-foreground mb-2">PLAGIARISM SUMMARY</div>
+                            <div className="grid grid-cols-3 gap-3">
+                              <div className="text-center">
+                                <div className="text-2xl font-bold text-blue-600">{Number(plagiarismResult?.internalScore || 0)}%</div>
+                                <div className="text-xs text-muted-foreground mt-1">Internal<br/>(Student-to-Student)</div>
+                              </div>
+                              <div className="text-center">
+                                <div className="text-2xl font-bold text-amber-600">{Number(plagiarismResult?.aiScore || 0)}%</div>
+                                <div className="text-xs text-muted-foreground mt-1">External<br/>(Online/AI)</div>
+                              </div>
+                              <div className="text-center">
+                                <div className="text-2xl font-bold text-red-600">{Number(plagiarismResult?.overallScore || 0)}%</div>
+                                <div className="text-xs text-muted-foreground mt-1">Overall<br/>(Combined)</div>
+                              </div>
+                            </div>
+                            {plagiarismResult?.riskLevel && (
+                              <div className="mt-3 pt-3 border-t border-primary/10 text-xs text-center">
+                                <span className="font-semibold">Risk Level:</span> <Badge variant="outline" className="ml-1">{plagiarismResult.riskLevel.toUpperCase()}</Badge>
+                              </div>
+                            )}
+                          </div>
+
                           <div className="flex items-center justify-between">
                             <div className="text-sm font-semibold text-gray-900">Best match</div>
                             <Badge variant={Number(plagiarismResult?.bestMatchPercent || 0) >= 70 ? "destructive" : "outline"} className="text-base">
@@ -1963,6 +2046,7 @@ const AIGrading = () => {
 
                           {Array.isArray(plagiarismResult?.matches) && plagiarismResult.matches.length ? (
                             <div className="space-y-2">
+                              <div className="text-xs font-semibold text-muted-foreground mb-2">Similar Student Submissions</div>
                               {plagiarismResult.matches.map((m: any, idx: number) => (
                                 <div key={`pl-${idx}`} className="rounded-lg border border-primary/10 bg-white p-3">
                                   <div className="flex items-center justify-between gap-2">
@@ -1985,8 +2069,33 @@ const AIGrading = () => {
                               ))}
                             </div>
                           ) : (
-                            <div className="text-sm text-muted-foreground">No similar chunks found.</div>
+                            <div className="text-sm text-muted-foreground">No similar student submissions found for this assessment yet.</div>
                           )}
+
+                          {Number(plagiarismResult?.aiScore || 0) > 0 ? (
+                            <div className="mt-4 space-y-2">
+                              <Separator />
+                              <div className="text-xs font-semibold text-muted-foreground">Online Resources / AI-Generated</div>
+                              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="text-xs font-semibold text-amber-900">AI-Generated Content Detected</div>
+                                  <Badge variant="outline" className="text-xs bg-amber-100 text-amber-900 border-amber-200">
+                                    {Number(plagiarismResult?.aiScore || 0)}%
+                                  </Badge>
+                                </div>
+                                {plagiarismResult?.isGptGenerated && (
+                                  <div className="mt-2 text-xs text-amber-800">
+                                    ⚠️ Content appears to be generated by AI language models.
+                                  </div>
+                                )}
+                                {String(plagiarismResult?.aiAdditionalFeedback || "").trim() && (
+                                  <div className="mt-2 text-xs text-amber-800">
+                                    {String(plagiarismResult.aiAdditionalFeedback)}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
                       ) : (
                         <div className="text-sm text-muted-foreground">

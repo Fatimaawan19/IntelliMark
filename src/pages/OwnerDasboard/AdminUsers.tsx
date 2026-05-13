@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { ChevronLeft, UserPlus, Trash2, Users, GraduationCap, BookOpen } from 'lucide-react';
+import { ChevronLeft, UserPlus, Trash2, Users, GraduationCap, BookOpen, Pencil, Loader2, X } from 'lucide-react';
 
 import { auth, db } from '../../firebase';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
@@ -25,7 +25,7 @@ const AdminUsers: React.FC = () => {
   const [batch, setBatch] = useState('');
   const [regNo, setRegNo] = useState('');
   const [studentPhone, setStudentPhone] = useState('');
-  const [semester, setSemester] = useState('');  const [degree, setDegree] = useState('');
+  const [semester, setSemester] = useState(''); const [degree, setDegree] = useState('');
   const [studentDept, setStudentDept] = useState('');
 
   // Teacher fields
@@ -35,6 +35,14 @@ const AdminUsers: React.FC = () => {
 
   // Users state
   const [users, setUsers] = useState<any[]>([]);
+
+  // Edit user state
+  const [editUser, setEditUser] = useState<any>(null);
+  const [editEmail, setEditEmail] = useState('');
+  const [editPassword, setEditPassword] = useState('');
+  const [editLoading, setEditLoading] = useState(false);
+
+  const API_BASE = 'http://localhost:5000/api';
 
   // REAL-TIME FETCH
   React.useEffect(() => {
@@ -97,9 +105,9 @@ const AdminUsers: React.FC = () => {
     const prefix = `FA${yearCode}-${degreeCode}-`;
 
     // Find all students with the same prefix
-    const existingStudents = users.filter(u => 
-      u.role === 'student' && 
-      u.regNo && 
+    const existingStudents = users.filter(u =>
+      u.role === 'student' &&
+      u.regNo &&
       u.regNo.startsWith(prefix)
     );
 
@@ -197,12 +205,69 @@ const AdminUsers: React.FC = () => {
       console.error("Error deleting user:", error);
       alert("Failed to delete user");
     }
-  };  return (
+  };
+
+  // Open edit dialog
+  const openEditDialog = (user: any) => {
+    setEditUser(user);
+    setEditEmail(user.email || '');
+    setEditPassword('');
+  };
+
+  // Handle edit user
+  const handleEditUser = async () => {
+    if (!editUser) return;
+
+    const trimmedEmail = editEmail.trim().toLowerCase();
+    const emailChanged = trimmedEmail && trimmedEmail !== editUser.email;
+    const passwordChanged = editPassword.length > 0;
+
+    if (!emailChanged && !passwordChanged) {
+      alert('No changes to save.');
+      return;
+    }
+
+    if (passwordChanged && editPassword.length < 6) {
+      alert('Password must be at least 6 characters.');
+      return;
+    }
+
+    setEditLoading(true);
+
+    try {
+      const body: any = {};
+      if (emailChanged) body.email = trimmedEmail;
+      if (passwordChanged) body.password = editPassword;
+
+      // ✅ FIXED: Removed '/admin' from the API path
+      const res = await fetch(`${API_BASE}/admin/update-user/${editUser.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || 'Failed to update user');
+      }
+
+      alert(data.message);
+      setEditUser(null);
+      setEditEmail('');
+      setEditPassword('');
+    } catch (error: any) {
+      console.error('Error updating user:', error);
+      alert(error.message || 'Failed to update user');
+    } finally {
+      setEditLoading(false);
+    }
+  }; return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-gray-50 to-slate-100">
       {/* Title Bar */}
       <div className="px-4 md:px-6 pt-8 pb-4 flex items-center gap-4 border-b bg-white/80 backdrop-blur-md shadow-sm">
-        <Button 
-          variant="ghost" 
+        <Button
+          variant="ghost"
           onClick={() => navigate('/admin-dashboard')}
           className="hover:bg-primary/10 transition-all p-2 rounded-lg"
         >
@@ -213,7 +278,7 @@ const AdminUsers: React.FC = () => {
         <div className="flex items-center gap-2">
           <span className="text-2xl font-bold bg-gradient-to-r from-primary to-primary/70 bg-clip-text text-transparent flex items-center gap-2">
             InteliMark
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-primary" viewBox="0 0 24 24" fill="none"><path d="M17.5 7.5a3.5 3.5 0 0 0-3.5-3.5c-.5 0-.98.09-1.42.26A3.5 3.5 0 0 0 6.5 7.5c0 .5.09.98.26 1.42A3.5 3.5 0 0 0 7.5 17.5c.5 0 .98-.09 1.42-.26A3.5 3.5 0 0 0 17.5 16.5c0-.5-.09-.98-.26-1.42A3.5 3.5 0 0 0 16.5 6.5c-.5 0-.98.09-1.42.26A3.5 3.5 0 0 0 7.5 7.5" stroke="#a855f7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-primary" viewBox="0 0 24 24" fill="none"><path d="M17.5 7.5a3.5 3.5 0 0 0-3.5-3.5c-.5 0-.98.09-1.42.26A3.5 3.5 0 0 0 6.5 7.5c0 .5.09.98.26 1.42A3.5 3.5 0 0 0 7.5 17.5c.5 0 .98-.09 1.42-.26A3.5 3.5 0 0 0 17.5 16.5c0-.5-.09-.98-.26-1.42A3.5 3.5 0 0 0 16.5 6.5c-.5 0-.98.09-1.42.26A3.5 3.5 0 0 0 7.5 7.5" stroke="#a855f7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
           </span>
         </div>
         <div className="pl-6 border-l border-gray-200 flex flex-col">
@@ -223,362 +288,447 @@ const AdminUsers: React.FC = () => {
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-8">        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Enhanced Form Section */}
-          <div className="lg:col-span-1 animate-in fade-in slide-in-from-left-4 duration-700">
-            <Card className="border-0 shadow-xl bg-white sticky top-8 overflow-hidden h-[calc(100vh-80px)]">
-              <CardHeader className="border-b bg-gradient-to-br from-primary/10 via-primary/5 to-transparent relative overflow-hidden">
-                <div className="absolute inset-0 bg-grid-white/10 [mask-image:linear-gradient(0deg,white,transparent)]"></div>
-                <div className="relative flex items-center gap-3">
-                  <div className="p-3 bg-gradient-to-br from-primary to-primary/80 rounded-xl shadow-lg">
-                    <UserPlus className="h-5 w-5 text-white" />
-                  </div>
-                  <div>
-                    <CardTitle className="text-xl font-bold text-gray-900">Add New User</CardTitle>
-                    <CardDescription className="text-xs text-gray-600">Create student or teacher account</CardDescription>
-                  </div>
+        {/* Enhanced Form Section */}
+        <div className="lg:col-span-1 animate-in fade-in slide-in-from-left-4 duration-700">
+          <Card className="border-0 shadow-xl bg-white sticky top-8 overflow-hidden h-[calc(100vh-80px)]">
+            <CardHeader className="border-b bg-gradient-to-br from-primary/10 via-primary/5 to-transparent relative overflow-hidden">
+              <div className="absolute inset-0 bg-grid-white/10 [mask-image:linear-gradient(0deg,white,transparent)]"></div>
+              <div className="relative flex items-center gap-3">
+                <div className="p-3 bg-gradient-to-br from-primary to-primary/80 rounded-xl shadow-lg">
+                  <UserPlus className="h-5 w-5 text-white" />
                 </div>
-              </CardHeader>
+                <div>
+                  <CardTitle className="text-xl font-bold text-gray-900">Add New User</CardTitle>
+                  <CardDescription className="text-xs text-gray-600">Create student or teacher account</CardDescription>
+                </div>
+              </div>
+            </CardHeader>
 
-              <CardContent className="pt-6 h-[calc(100%-100px)] overflow-y-auto scrollbar-thin scrollbar-thumb-primary/20 scrollbar-track-gray-100 hover:scrollbar-thumb-primary/40">
-                <form className="space-y-5" onSubmit={handleAddUser}>
-                  {/* Name Field */}
-                  <div className="space-y-2 group">
-                    <Label htmlFor="name" className="text-sm font-semibold text-gray-700 group-hover:text-primary transition-colors">
-                      Full Name
-                    </Label>
-                    <Input
-                      id="name"
-                      type="text"
-                      placeholder="Enter full name"
-                      value={name}
-                      onChange={e => setName(e.target.value)}
-                      required
-                      className="border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
-                    />
-                  </div>                  {/* Email Field */}
-                  <div className="space-y-2 group">
-                    <Label htmlFor="email" className="text-sm font-semibold text-gray-700 group-hover:text-primary transition-colors">
-                      Email Address
-                    </Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="user@example.com"
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      required
-                      className="border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
-                    />
-                  </div>
+            <CardContent className="pt-6 h-[calc(100%-100px)] overflow-y-auto scrollbar-thin scrollbar-thumb-primary/20 scrollbar-track-gray-100 hover:scrollbar-thumb-primary/40">
+              <form className="space-y-5" onSubmit={handleAddUser}>
+                {/* Name Field */}
+                <div className="space-y-2 group">
+                  <Label htmlFor="name" className="text-sm font-semibold text-gray-700 group-hover:text-primary transition-colors">
+                    Full Name
+                  </Label>
+                  <Input
+                    id="name"
+                    type="text"
+                    placeholder="Enter full name"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    required
+                    className="border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                  />
+                </div>                  {/* Email Field */}
+                <div className="space-y-2 group">
+                  <Label htmlFor="email" className="text-sm font-semibold text-gray-700 group-hover:text-primary transition-colors">
+                    Email Address
+                  </Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    placeholder="user@example.com"
+                    value={email}
+                    onChange={e => setEmail(e.target.value)}
+                    required
+                    className="border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                  />
+                </div>
 
-                  {/* Password Field */}
-                  <div className="space-y-2 group">
-                    <Label htmlFor="password" className="text-sm font-semibold text-gray-700 group-hover:text-primary transition-colors">
-                      Password
-                    </Label>
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      required
-                      className="border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
-                    />
-                  </div>
+                {/* Password Field */}
+                <div className="space-y-2 group">
+                  <Label htmlFor="password" className="text-sm font-semibold text-gray-700 group-hover:text-primary transition-colors">
+                    Password
+                  </Label>
+                  <Input
+                    id="password"
+                    type="password"
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={e => setPassword(e.target.value)}
+                    required
+                    className="border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all"
+                  />
+                </div>
 
-                  {/* Role Field */}
-                  <div className="space-y-2 group">
-                    <Label htmlFor="role" className="text-sm font-semibold text-gray-700 group-hover:text-primary transition-colors">
-                      Role
-                    </Label>
-                    <Select value={role} onValueChange={setRole}>
-                      <SelectTrigger className="border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all">
-                        <SelectValue placeholder="Select role" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="student">
-                          <div className="flex items-center gap-2">
-                            <GraduationCap className="h-4 w-4 text-blue-600" />
-                            <span>Student</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="teacher">
-                          <div className="flex items-center gap-2">
-                            <BookOpen className="h-4 w-4 text-purple-600" />
-                            <span>Teacher</span>
-                          </div>
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  {/* Student-specific Fields with Animation */}
-                  {role === 'student' && (
-                    <div className="space-y-4 pt-4 border-t border-gray-200 animate-in fade-in slide-in-from-top-2 duration-300">
-                      <div className="flex items-center gap-2">
-                        <div className="h-1 w-1 rounded-full bg-primary"></div>
-                        <p className="text-xs font-bold text-primary uppercase tracking-wider">Student Information</p>
-                      </div>                        <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-2">
-                          <Label className="text-xs font-medium text-gray-600">Batch Year</Label>
-                          <Input
-                            placeholder="2024"
-                            value={batch}
-                            onChange={e => setBatch(e.target.value)}
-                            required
-                            className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
-                          />
+                {/* Role Field */}
+                <div className="space-y-2 group">
+                  <Label htmlFor="role" className="text-sm font-semibold text-gray-700 group-hover:text-primary transition-colors">
+                    Role
+                  </Label>
+                  <Select value={role} onValueChange={setRole}>
+                    <SelectTrigger className="border-gray-200 focus:border-primary focus:ring-2 focus:ring-primary/20 transition-all">
+                      <SelectValue placeholder="Select role" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="student">
+                        <div className="flex items-center gap-2">
+                          <GraduationCap className="h-4 w-4 text-blue-600" />
+                          <span>Student</span>
                         </div>
-                        <div className="space-y-2">
-                          <Label className="text-xs font-medium text-gray-600">Semester</Label>
-                          <Input
-                            placeholder="1"
-                            value={semester}
-                            onChange={e => setSemester(e.target.value)}
-                            required
-                            className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
-                          />
+                      </SelectItem>
+                      <SelectItem value="teacher">
+                        <div className="flex items-center gap-2">
+                          <BookOpen className="h-4 w-4 text-purple-600" />
+                          <span>Teacher</span>
                         </div>
-                      </div>                      <div className="space-y-2">
-                        <Label className="text-xs font-medium text-gray-600">Phone Number</Label>
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Student-specific Fields with Animation */}
+                {role === 'student' && (
+                  <div className="space-y-4 pt-4 border-t border-gray-200 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1 w-1 rounded-full bg-primary"></div>
+                      <p className="text-xs font-bold text-primary uppercase tracking-wider">Student Information</p>
+                    </div>                        <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-2">
+                        <Label className="text-xs font-medium text-gray-600">Batch Year</Label>
                         <Input
-                          type="tel"
-                          placeholder="03001234567"
-                          value={studentPhone}
-                          onChange={e => setStudentPhone(e.target.value)}
+                          placeholder="2024"
+                          value={batch}
+                          onChange={e => setBatch(e.target.value)}
                           required
                           className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                         />
-                      </div>                      <div className="space-y-2">
-                        <Label className="text-xs font-medium text-gray-600">Degree Program</Label>
-                        <Select value={degree} onValueChange={setDegree} required>
-                          <SelectTrigger className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20">
-                            <SelectValue placeholder="Select degree" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Bachelor of Data Science">Bachelor of Data Science</SelectItem>
-                            <SelectItem value="Bachelor of Computer Science">Bachelor of Computer Science</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>                      <div className="space-y-2">
-                        <Label className="text-xs font-medium text-gray-600">Department</Label>
-                        <Input
-                          placeholder=""
-                          value={studentDept}
-                          readOnly
-                          className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all bg-gray-50"
-                        />
                       </div>
-
                       <div className="space-y-2">
-                        <Label className="text-xs font-medium text-gray-600">Registration Number</Label>
+                        <Label className="text-xs font-medium text-gray-600">Semester</Label>
                         <Input
-                          placeholder=""
-                          value={regNo}
-                          readOnly
-                          className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all bg-gray-50"
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Teacher-specific Fields with Animation */}
-                  {role === 'teacher' && (
-                    <div className="space-y-4 pt-4 border-t border-gray-200 animate-in fade-in slide-in-from-top-2 duration-300">
-                      <div className="flex items-center gap-2">
-                        <div className="h-1 w-1 rounded-full bg-purple-600"></div>
-                        <p className="text-xs font-bold text-purple-600 uppercase tracking-wider">Teacher Information</p>
-                      </div>
-                      
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium text-gray-600">Specialization</Label>
-                        <Input
-                          placeholder="Machine Learning, AI"
-                          value={specialization}
-                          onChange={e => setSpecialization(e.target.value)}
+                          placeholder="1"
+                          value={semester}
+                          onChange={e => setSemester(e.target.value)}
                           required
-                          className="border-gray-200 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
+                          className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
                         />
                       </div>
-
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium text-gray-600">Department</Label>
-                        <Input
-                          placeholder="Computer Science"
-                          value={teacherDept}
-                          onChange={e => setTeacherDept(e.target.value)}
-                          required
-                          className="border-gray-200 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label className="text-xs font-medium text-gray-600">Phone Number</Label>
-                        <Input
-                          type="tel"
-                          placeholder="03001234567"
-                          value={teacherPhone}
-                          onChange={e => setTeacherPhone(e.target.value)}
-                          required
-                          className="border-gray-200 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                        />
-                      </div>
+                    </div>                      <div className="space-y-2">
+                      <Label className="text-xs font-medium text-gray-600">Phone Number</Label>
+                      <Input
+                        type="tel"
+                        placeholder="03001234567"
+                        value={studentPhone}
+                        onChange={e => setStudentPhone(e.target.value)}
+                        required
+                        className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all"
+                      />
+                    </div>                      <div className="space-y-2">
+                      <Label className="text-xs font-medium text-gray-600">Degree Program</Label>
+                      <Select value={degree} onValueChange={setDegree} required>
+                        <SelectTrigger className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20">
+                          <SelectValue placeholder="Select degree" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Bachelor of Data Science">Bachelor of Data Science</SelectItem>
+                          <SelectItem value="Bachelor of Computer Science">Bachelor of Computer Science</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>                      <div className="space-y-2">
+                      <Label className="text-xs font-medium text-gray-600">Department</Label>
+                      <Input
+                        placeholder=""
+                        value={studentDept}
+                        readOnly
+                        className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all bg-gray-50"
+                      />
                     </div>
-                  )}
 
-                  <Button 
-                    type="submit" 
-                    disabled={loading}
-                    className="w-full bg-gradient-to-r from-primary via-primary/90 to-primary hover:from-primary/90 hover:via-primary hover:to-primary/90 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02]"
-                  >
-                    {loading ? (
-                      <div className="flex items-center gap-2">
-                        <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                        <span>Adding User...</span>
-                      </div>
-                    ) : (
-                      <div className="flex items-center gap-2">
-                        <UserPlus className="h-4 w-4" />
-                        <span>Add User</span>
-                      </div>
-                    )}
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
-          </div>          {/* Enhanced Users List Section */}
-          <div className="lg:col-span-2 animate-in fade-in slide-in-from-right-4 duration-700">
-            <Card className="border-0 shadow-xl bg-white overflow-hidden">
-              <CardHeader className="border-b bg-gradient-to-br from-primary/10 via-primary/5 to-transparent relative overflow-hidden">
-                <div className="absolute inset-0 bg-grid-white/10 [mask-image:linear-gradient(0deg,white,transparent)]"></div>
-                <div className="relative flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="p-3 bg-gradient-to-br from-primary to-primary/80 rounded-xl shadow-lg">
-                      <Users className="h-5 w-5 text-white" />
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-gray-600">Registration Number</Label>
+                      <Input
+                        placeholder=""
+                        value={regNo}
+                        readOnly
+                        className="border-gray-200 text-sm focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 transition-all bg-gray-50"
+                      />
                     </div>
-                    <div>                      <CardTitle className="text-xl font-bold text-gray-900">All Users</CardTitle>
-                      <CardDescription className="text-xs text-gray-600">
-                        <span className="inline-flex items-center gap-1">
-                          <div className="h-2 w-2 rounded-full bg-blue-500"></div>
-                          {users.filter(u => u.role === 'student').length} Students
-                        </span>
-                        <span className="text-gray-400 mx-1">•</span>
-                        <span className="inline-flex items-center gap-1">
-                          <div className="h-2 w-2 rounded-full bg-purple-500"></div>
-                          {users.filter(u => u.role === 'teacher').length} Teachers
-                        </span>
-                      </CardDescription>
-                    </div>
-                  </div>
-                  
-                  {/* Total Users Count - Inside Section */}
-                  <div className="flex items-center gap-2 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-lg shadow-sm border border-gray-200">
-                    <span className="text-sm text-gray-600">Total:</span>
-                    <span className="text-lg font-bold text-gray-900">{users.filter(u => u.role !== 'admin').length}</span>
-                  </div>
-                </div>
-              </CardHeader>              <CardContent className="p-6">
-                {users.filter(u => u.role !== 'admin').length === 0 ? (
-                  <div className="flex flex-col items-center justify-center py-20 text-center">
-                    <div className="p-6 bg-gradient-to-br from-gray-100 to-slate-100 rounded-2xl mb-6 shadow-inner">
-                      <Users className="h-16 w-16 text-gray-400" />
-                    </div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-2">No Users Yet</h3>
-                    <p className="text-sm text-gray-500 max-w-sm">Add your first student or teacher using the form to get started with user management</p>
-                  </div>
-                ) : (                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {users.filter(u => u.role !== 'admin').map((user, index) => (
-                      <div 
-                        key={user.id} 
-                        className={`group relative p-4 bg-white rounded-xl border border-gray-200 hover:shadow-lg transition-all duration-200 overflow-hidden ${
-                          user.role === 'student' 
-                            ? 'hover:border-blue-300' 
-                            : 'hover:border-purple-300'
-                        }`}
-                      >
-                        {/* User Info */}
-                        <div className="relative flex items-center gap-3">
-                          <div className="relative flex-shrink-0">
-                            <Avatar className={`h-12 w-12 border-2 border-white shadow-sm ${
-                              user.role === 'student'
-                                ? 'group-hover:border-blue-200'
-                                : 'group-hover:border-purple-200'
-                            }`}>
-                              <AvatarFallback className={`font-semibold text-sm ${
-                                user.role === 'student' 
-                                  ? 'bg-blue-50 text-blue-700' 
-                                  : 'bg-purple-50 text-purple-700'
-                              }`}>
-                                {user.name ? user.name.split(" ").map(n => n[0]).join("").toUpperCase() : "U"}
-                              </AvatarFallback>
-                            </Avatar>
-                            <div className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border-2 border-white shadow-sm flex items-center justify-center ${
-                              user.role === 'student' ? 'bg-blue-500' : 'bg-purple-500'
-                            }`}>
-                              {user.role === 'student' ? (
-                                <GraduationCap className="h-2.5 w-2.5 text-white" />
-                              ) : (
-                                <BookOpen className="h-2.5 w-2.5 text-white" />
-                              )}
-                            </div>
-                          </div>
-
-                          <div className="flex-1 min-w-0 pr-8">
-                            <h3 className="font-semibold text-gray-900 truncate text-sm">
-                              {user.name}
-                            </h3>
-                            <p className="text-xs text-gray-500 truncate mb-1.5">{user.email}</p>
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <Badge 
-                                variant="outline" 
-                                className={`text-[10px] font-medium px-1.5 py-0 ${
-                                  user.role === 'student' 
-                                    ? 'bg-blue-50 text-blue-600 border-blue-200' 
-                                    : 'bg-purple-50 text-purple-600 border-purple-200'
-                                }`}
-                              >
-                                {user.role}
-                              </Badge>
-                              {user.degree && (
-                                <span className="text-[10px] text-gray-500 bg-gray-50 px-1.5 py-0.5 rounded">
-                                  {user.degree.replace('Bachelor of ', '')}
-                                </span>
-                              )}
-                              {user.specialization && (
-                                <span className="text-[10px] text-gray-500 bg-gray-50 px-1.5 py-0.5 rounded truncate max-w-[120px]">
-                                  {user.specialization}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Delete Button */}
-                        <div className="absolute top-3 right-3">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (window.confirm(`Are you sure you want to delete ${user.name}?`)) {
-                                handleDeleteUser(user.id);
-                              }
-                            }}
-                            className="h-7 w-7 p-0 hover:bg-red-50 hover:text-red-600 text-gray-400"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
                   </div>
                 )}
-              </CardContent>
-            </Card>
+
+                {/* Teacher-specific Fields with Animation */}
+                {role === 'teacher' && (
+                  <div className="space-y-4 pt-4 border-t border-gray-200 animate-in fade-in slide-in-from-top-2 duration-300">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1 w-1 rounded-full bg-purple-600"></div>
+                      <p className="text-xs font-bold text-purple-600 uppercase tracking-wider">Teacher Information</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-gray-600">Specialization</Label>
+                      <Input
+                        placeholder="Machine Learning, AI"
+                        value={specialization}
+                        onChange={e => setSpecialization(e.target.value)}
+                        required
+                        className="border-gray-200 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-gray-600">Department</Label>
+                      <Input
+                        placeholder="Computer Science"
+                        value={teacherDept}
+                        onChange={e => setTeacherDept(e.target.value)}
+                        required
+                        className="border-gray-200 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label className="text-xs font-medium text-gray-600">Phone Number</Label>
+                      <Input
+                        type="tel"
+                        placeholder="03001234567"
+                        value={teacherPhone}
+                        onChange={e => setTeacherPhone(e.target.value)}
+                        required
+                        className="border-gray-200 text-sm focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <Button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full bg-gradient-to-r from-primary via-primary/90 to-primary hover:from-primary/90 hover:via-primary hover:to-primary/90 shadow-lg hover:shadow-xl transition-all duration-300 hover:scale-[1.02]"
+                >
+                  {loading ? (
+                    <div className="flex items-center gap-2">
+                      <div className="h-4 w-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                      <span>Adding User...</span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <UserPlus className="h-4 w-4" />
+                      <span>Add User</span>
+                    </div>
+                  )}
+                </Button>
+              </form>
+            </CardContent>
+          </Card>
+        </div>          {/* Enhanced Users List Section */}
+        <div className="lg:col-span-2 animate-in fade-in slide-in-from-right-4 duration-700">
+          <Card className="border-0 shadow-xl bg-white overflow-hidden">
+            <CardHeader className="border-b bg-gradient-to-br from-primary/10 via-primary/5 to-transparent relative overflow-hidden">
+              <div className="absolute inset-0 bg-grid-white/10 [mask-image:linear-gradient(0deg,white,transparent)]"></div>
+              <div className="relative flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-gradient-to-br from-primary to-primary/80 rounded-xl shadow-lg">
+                    <Users className="h-5 w-5 text-white" />
+                  </div>
+                  <div>                      <CardTitle className="text-xl font-bold text-gray-900">All Users</CardTitle>
+                    <CardDescription className="text-xs text-gray-600">
+                      <span className="inline-flex items-center gap-1">
+                        <div className="h-2 w-2 rounded-full bg-blue-500"></div>
+                        {users.filter(u => u.role === 'student').length} Students
+                      </span>
+                      <span className="text-gray-400 mx-1">•</span>
+                      <span className="inline-flex items-center gap-1">
+                        <div className="h-2 w-2 rounded-full bg-purple-500"></div>
+                        {users.filter(u => u.role === 'teacher').length} Teachers
+                      </span>
+                    </CardDescription>
+                  </div>
+                </div>
+
+                {/* Total Users Count - Inside Section */}
+                <div className="flex items-center gap-2 bg-white/80 backdrop-blur-sm px-4 py-2 rounded-lg shadow-sm border border-gray-200">
+                  <span className="text-sm text-gray-600">Total:</span>
+                  <span className="text-lg font-bold text-gray-900">{users.filter(u => u.role !== 'admin').length}</span>
+                </div>
+              </div>
+            </CardHeader>              <CardContent className="p-6">
+              {users.filter(u => u.role !== 'admin').length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 text-center">
+                  <div className="p-6 bg-gradient-to-br from-gray-100 to-slate-100 rounded-2xl mb-6 shadow-inner">
+                    <Users className="h-16 w-16 text-gray-400" />
+                  </div>
+                  <h3 className="text-xl font-bold text-gray-900 mb-2">No Users Yet</h3>
+                  <p className="text-sm text-gray-500 max-w-sm">Add your first student or teacher using the form to get started with user management</p>
+                </div>
+              ) : (<div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {users.filter(u => u.role !== 'admin').map((user, index) => (
+                  <div
+                    key={user.id}
+                    className={`group relative p-4 bg-white rounded-xl border border-gray-200 hover:shadow-lg transition-all duration-200 overflow-hidden ${user.role === 'student'
+                      ? 'hover:border-blue-300'
+                      : 'hover:border-purple-300'
+                      }`}
+                  >
+                    {/* User Info */}
+                    <div className="relative flex items-center gap-3">
+                      <div className="relative flex-shrink-0">
+                        <Avatar className={`h-12 w-12 border-2 border-white shadow-sm ${user.role === 'student'
+                          ? 'group-hover:border-blue-200'
+                          : 'group-hover:border-purple-200'
+                          }`}>
+                          <AvatarFallback className={`font-semibold text-sm ${user.role === 'student'
+                            ? 'bg-blue-50 text-blue-700'
+                            : 'bg-purple-50 text-purple-700'
+                            }`}>
+                            {user.name ? user.name.split(" ").map(n => n[0]).join("").toUpperCase() : "U"}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className={`absolute -bottom-0.5 -right-0.5 h-4 w-4 rounded-full border-2 border-white shadow-sm flex items-center justify-center ${user.role === 'student' ? 'bg-blue-500' : 'bg-purple-500'
+                          }`}>
+                          {user.role === 'student' ? (
+                            <GraduationCap className="h-2.5 w-2.5 text-white" />
+                          ) : (
+                            <BookOpen className="h-2.5 w-2.5 text-white" />
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="flex-1 min-w-0 pr-8">
+                        <h3 className="font-semibold text-gray-900 truncate text-sm">
+                          {user.name}
+                        </h3>
+                        <p className="text-xs text-gray-500 truncate mb-1.5">{user.email}</p>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] font-medium px-1.5 py-0 ${user.role === 'student'
+                              ? 'bg-blue-50 text-blue-600 border-blue-200'
+                              : 'bg-purple-50 text-purple-600 border-purple-200'
+                              }`}
+                          >
+                            {user.role}
+                          </Badge>
+                          {user.degree && (
+                            <span className="text-[10px] text-gray-500 bg-gray-50 px-1.5 py-0.5 rounded">
+                              {user.degree.replace('Bachelor of ', '')}
+                            </span>
+                          )}
+                          {user.specialization && (
+                            <span className="text-[10px] text-gray-500 bg-gray-50 px-1.5 py-0.5 rounded truncate max-w-[120px]">
+                              {user.specialization}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Edit & Delete Buttons */}
+                    <div className="absolute top-3 right-3 flex items-center gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditDialog(user);
+                        }}
+                        className="h-7 w-7 p-0 hover:bg-blue-50 hover:text-blue-600 text-gray-400"
+                        title="Edit user"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (window.confirm(`Are you sure you want to delete ${user.name}?`)) {
+                            handleDeleteUser(user.id);
+                          }
+                        }}
+                        className="h-7 w-7 p-0 hover:bg-red-50 hover:text-red-600 text-gray-400"
+                        title="Delete user"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+      </div>      {/* Edit User Modal */}
+      {editUser && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white p-6 rounded-2xl w-[420px] shadow-2xl animate-in fade-in zoom-in space-y-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-blue-100 rounded-lg">
+                  <Pencil className="h-5 w-5 text-blue-600" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-gray-900">Edit User</h2>
+                  <p className="text-xs text-gray-500">{editUser.name} ({editUser.role})</p>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => { setEditUser(null); setEditEmail(''); setEditPassword(''); }}
+                className="h-8 w-8 p-0 text-gray-400 hover:text-gray-600"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-gray-700">Email Address</Label>
+                <Input
+                  type="email"
+                  value={editEmail}
+                  onChange={(e) => setEditEmail(e.target.value)}
+                  placeholder="user@example.com"
+                  className="border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                />
+                <p className="text-[10px] text-gray-400">Leave unchanged to keep current email</p>
+              </div>
+
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-gray-700">New Password</Label>
+                <Input
+                  type="password"
+                  value={editPassword}
+                  onChange={(e) => setEditPassword(e.target.value)}
+                  placeholder="Leave blank to keep current password"
+                  className="border-gray-200 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20"
+                />
+                <p className="text-[10px] text-gray-400">Min 6 characters. Leave blank to keep current password</p>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <Button
+                variant="outline"
+                className="flex-1"
+                onClick={() => { setEditUser(null); setEditEmail(''); setEditPassword(''); }}
+              >
+                Cancel
+              </Button>
+              <Button
+                className="flex-1 bg-blue-600 hover:bg-blue-700"
+                onClick={handleEditUser}
+                disabled={editLoading}
+              >
+                {editLoading ? (
+                  <>
+                    <Loader2 className="animate-spin mr-2 h-4 w-4" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
+              </Button>
+            </div>
           </div>
         </div>
-      </div>      <style>{`
+      )}
+
+      <style>{`
         @keyframes fadeInUp {
           from {
             opacity: 0;

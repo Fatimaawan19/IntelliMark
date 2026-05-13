@@ -1,4 +1,4 @@
-// ===================== server.js - FIXED VERSION =====================
+// ===================== server.js  =====================
 const express = require('express');
 const mongoose = require('mongoose');
 const dotenv = require('dotenv');
@@ -187,6 +187,12 @@ connectMongoWithFallback()
     console.log('   ✅ extractionRoutes loaded');
     const adminRoutes = require('./routes/adminRoutes');
     console.log('   ✅ adminRoutes loaded');
+    const otpRoutes = require('./routes/otpRoutes');
+    console.log('   ✅ otpRoutes loaded');
+    const cloPerformanceRoutes = require('./routes/cloPerformanceRoutes');
+    console.log('   ✅ cloPerformanceRoutes loaded');
+    const plagiarismRoutes = require('./routes/plagiarismRoutes');
+    console.log('   ✅ plagiarismRoutes loaded');
 
     // Mount routes
     app.use('/api/courses', courseRoutes);
@@ -203,6 +209,12 @@ connectMongoWithFallback()
     console.log('   ✅ extractionRoutes mounted');
     app.use('/api/admin', adminRoutes);
     console.log('   ✅ adminRoutes mounted');
+    app.use('/api/otp', otpRoutes);
+    console.log('   ✅ otpRoutes mounted');
+    app.use('/api/clo-performance', cloPerformanceRoutes);
+    console.log('   ✅ cloPerformanceRoutes mounted');
+    app.use('/api/plagiarism', plagiarismRoutes);
+    console.log('   ✅ plagiarismRoutes mounted');
 
     console.log('✅ Routes mounted:');
     console.log('   - /api/courses/*');
@@ -212,6 +224,7 @@ connectMongoWithFallback()
     console.log('   - /api/automark/*');
     console.log('   - /api/extract/*');
     console.log('   - /api/admin/*');
+    console.log('   - /api/clo-performance/*');
 
     // ==================== STATIC FILES ====================
     // Serve uploaded files (PDFs, etc.)

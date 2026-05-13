@@ -1202,7 +1202,7 @@ const TeacherDashboard = () => {
             <div className="bg-blue-50 border-2 border-blue-300 rounded-xl p-8 shadow-2xl w-full max-w-md flex flex-col items-center">
               <h3 className="text-lg font-bold text-blue-700 mb-4">Upload Course Content</h3>
               <input type="file" accept=".pdf,.doc,.docx" onChange={handleFileChange} className="mb-4" />
-              <Button onClick={handleUploadContent} disabled={uploading || !file} className="bg-blue-600 text-white w-full mb-2">
+              <Button onClick={handleUploadContent} disabled={uploading || !file} className="bg-blue-600 hover:bg-blue-600 text-white w-full mb-2">
                 {uploading ? 'Uploading...' : 'Upload'}
               </Button>
               <Button variant="outline" onClick={handleCloseContentModal} className="w-full">Cancel</Button>

@@ -280,6 +280,18 @@ const submissionSchema = new mongoose.Schema({
     default: null
   },
 
+  // AI-generated content detection score (ZeroGPT API)
+  plagiarismAiScore: {
+    type: Number,
+    min: 0,
+    max: 100,
+    default: null
+  },
+  plagiarismIsGptGenerated: {
+    type: Boolean,
+    default: false
+  },
+
   // Tier-2 mistakes summary (for listing/analytics without SubmissionRaw)
   mistakes: {
     type: Array,

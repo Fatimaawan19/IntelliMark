@@ -1,298 +1,530 @@
 import { useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
+
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { GraduationCap } from "lucide-react";
+import {
+  InputOTP,
+  InputOTPGroup,
+  InputOTPSlot,
+  InputOTPSeparator,
+} from "@/components/ui/input-otp";
+import { GraduationCap, ShieldCheck, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+
 import loginImage from "../../../robot.jfif";
 
-// Firebase imports
 import { auth, db } from "../../firebase";
-import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
-import { collection, query, where, getDocs, doc, setDoc } from "firebase/firestore";
+
+import {
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+} from "firebase/auth";
+
+import {
+  collection,
+  query,
+  where,
+  getDocs,
+  doc,
+  setDoc,
+} from "firebase/firestore";
+
 import { trackUserLogin } from "../../utils/loginTracker";
+
+// Backend API base URL
+const API_BASE = "http://localhost:5000/api";
 
 export default function Login() {
   const navigate = useNavigate();
   const { toast } = useToast();
-  
+
+  // 🔐 OTP STATE
+  const [showOtp, setShowOtp] = useState(false);
+  const [otp, setOtp] = useState("");
+  const [verifying, setVerifying] = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
+
+  // 🔑 Persist login info across re-renders
+  const [pendingLogin, setPendingLogin] = useState<{
+    email: string;
+    role: string;
+    user: any;
+  } | null>(null);
+
+  // 🔥 TIMER
+  const [timer, setTimer] = useState(60);
+  const [canResend, setCanResend] = useState(false);
+
+  // -------------------------
+  // TIMER LOGIC
+  // -------------------------
+  useEffect(() => {
+    let interval: any;
+
+    if (showOtp && timer > 0) {
+      interval = setInterval(() => {
+        setTimer((t) => t - 1);
+      }, 1000);
+    }
+
+    if (timer === 0) setCanResend(true);
+
+    return () => clearInterval(interval);
+  }, [timer, showOtp]);
+
+  // -------------------------
+  // TRUSTED DEVICE
+  // -------------------------
+  const saveTrustedDevice = (uid: string) => {
+    localStorage.setItem(
+      "trusted_device",
+      JSON.stringify({ uid, time: Date.now() })
+    );
+  };
+
+  const checkTrustedDevice = (uid: string) => {
+    const data = localStorage.getItem("trusted_device");
+    if (!data) return false;
+
+    const parsed = JSON.parse(data);
+
+    return (
+      parsed.uid === uid &&
+      Date.now() - parsed.time < 7 * 24 * 60 * 60 * 1000
+    );
+  };
+
+  // -------------------------
+  // POST LOGIN (after OTP verified)
+  // -------------------------
+  const postLoginFlow = async (user: any, email: string, selectedRole: string) => {
+    const usersRef = collection(db, "users");
+    const q = query(usersRef, where("email", "==", email));
+    const snap = await getDocs(q);
+
+    let actualRole = "";
+
+    if (!snap.empty) {
+      const userData = snap.docs[0].data();
+      actualRole = userData.role;
+    } else {
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        email,
+        role: selectedRole,
+        createdAt: new Date().toISOString(),
+        displayName: email.split("@")[0],
+      });
+      actualRole = selectedRole;
+    }
+
+    // Validate: selected role must match actual role in Firestore
+    if (actualRole !== selectedRole) {
+      await auth.signOut();
+      toast({
+        variant: "destructive",
+        title: "Access Denied",
+        description: `Your account is registered as "${actualRole}". Please select the correct role.`,
+      });
+      return;
+    }
+
+    await trackUserLogin(user.uid, email);
+
+    if (actualRole === "student") navigate("/student-dashboard");
+    else if (actualRole === "teacher") navigate("/teacher-dashboard");
+    else navigate("/admin-dashboard");
+  };
+
+  // -------------------------
+  // SEND EMAIL OTP
+  // -------------------------
+  const sendEmailOtp = async (email: string) => {
+    setSendingOtp(true);
+    try {
+      const res = await fetch(`${API_BASE}/otp/send`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Failed to send OTP");
+      }
+
+      setShowOtp(true);
+      setTimer(60);
+      setCanResend(false);
+      setOtp("");
+
+      toast({
+        title: "OTP Sent",
+        description: "Check your email for the 6-digit code.",
+      });
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "OTP Error",
+        description: err.message || "Failed to send OTP. Please try again.",
+      });
+    } finally {
+      setSendingOtp(false);
+    }
+  };
+
+  // -------------------------
+  // LOGIN
+  // -------------------------
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const form = e.target as HTMLFormElement;
+
+    const email = (form.elements.namedItem("email") as HTMLInputElement)
+      .value.toLowerCase().trim();
+
+    const password = (form.elements.namedItem("password") as HTMLInputElement)
+      .value;
+
+    const role = (form.elements.namedItem("role") as HTMLSelectElement)
+      .value;
+
+    try {
+      const result = await signInWithEmailAndPassword(auth, email, password);
+      const user = result.user;
+
+      // Validate role BEFORE sending OTP
+      const usersRef = collection(db, "users");
+      const q = query(usersRef, where("email", "==", email));
+      const snap = await getDocs(q);
+
+      if (!snap.empty) {
+        const userData = snap.docs[0].data();
+        const actualRole = userData.role;
+
+        if (actualRole !== role) {
+          await auth.signOut();
+          toast({
+            variant: "destructive",
+            title: "Access Denied",
+            description: `Your account is registered as "${actualRole}". Please select the correct role.`,
+          });
+          return;
+        }
+      }
+
+      // If trusted device, skip 2FA
+      if (checkTrustedDevice(user.uid)) {
+        await postLoginFlow(user, email, role);
+        return;
+      }
+
+      // All correct — save login info and send OTP
+      setPendingLogin({ email, role, user });
+      await sendEmailOtp(email);
+
+    } catch (err: any) {
+      // If admin role selected and login failed, redirect to registration page
+      if (role === "admin" && (
+        err.code === "auth/wrong-password" ||
+        err.code === "auth/user-not-found" ||
+        err.code === "auth/invalid-credential"
+      )) {
+        toast({
+          title: "Redirecting to Registration",
+          description: "Admin account not found. Redirecting to registration page.",
+        });
+        navigate("/admin-register");
+        return;
+      }
+
+      toast({
+        variant: "destructive",
+        title: "Login Failed",
+        description: err.message,
+      });
+    }
+  };
+
+  // -------------------------
+  // VERIFY OTP
+  // -------------------------
+  const verifyOtp = async () => {
+    if (!pendingLogin || otp.length < 6) return;
+
+    setVerifying(true);
+
+    try {
+      const res = await fetch(`${API_BASE}/otp/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: pendingLogin.email,
+          code: otp,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || !data.success) {
+        throw new Error(data.message || "Invalid OTP");
+      }
+
+      // OTP verified — save trusted device and proceed
+      saveTrustedDevice(pendingLogin.user.uid);
+      await postLoginFlow(pendingLogin.user, pendingLogin.email, pendingLogin.role);
+
+      setShowOtp(false);
+      setOtp("");
+
+      toast({
+        title: "Success",
+        description: "2FA Verified",
+      });
+    } catch (err: any) {
+      toast({
+        variant: "destructive",
+        title: "Verification Failed",
+        description: err.message,
+      });
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  // -------------------------
+  // RESEND OTP
+  // -------------------------
+  const resendOtp = async () => {
+    if (!canResend || !pendingLogin) return;
+    await sendEmailOtp(pendingLogin.email);
+  };
+
+  // -------------------------
+  // PASSWORD RESET
+  // -------------------------
   const handleForgotPassword = async () => {
-    const emailInput = document.querySelector<HTMLInputElement>("#login-email");
-    const email = emailInput?.value.toLowerCase().trim();
+    const emailInput =
+      document.querySelector<HTMLInputElement>("#login-email");
+
+    const email = emailInput?.value?.trim().toLowerCase();
 
     if (!email) {
       toast({
         variant: "destructive",
         title: "Email Required",
-        description: "Please enter your email address first.",
+        description: "Please enter your email address first, then click Forgot Password.",
       });
       return;
     }
 
     try {
       await sendPasswordResetEmail(auth, email);
+
       toast({
-        title: "Password Reset Email Sent",
-        description: `Check your inbox at ${email} for the password reset link.`,
+        title: "Email Sent",
+        description: "Check your email account",
       });
-    } catch (error: any) {
-      console.error("Password Reset Error:", error);
-      if (error.code === "auth/user-not-found") {
-        toast({
-          variant: "destructive",
-          title: "User Not Found",
-          description: "No account exists with this email address.",
-        });
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Error",
-          description: error.message || "Failed to send password reset email.",
-        });
-      }
-    }
-  };
-  
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const form = e.target as HTMLFormElement;
-    const emailInput = form.elements.namedItem("login-email") as HTMLInputElement;
-    const passwordInput = form.elements.namedItem("login-password") as HTMLInputElement;
-    const roleSelect = form.elements.namedItem("role") as HTMLSelectElement;
+    } catch (err: any) {
+      let message = err.message || "Something went wrong. Please try again.";
 
-    const email = emailInput.value.toLowerCase();
-    const password = passwordInput.value;
-    const role = roleSelect.value;
-
-    try {
-      // First, try to authenticate with Firebase Auth
-      const authResult = await signInWithEmailAndPassword(auth, email, password);
-      
-      // After successful auth, check Firestore for user profile
-      const usersRef = collection(db, "users");
-      const q = query(usersRef, where("email", "==", email));
-      const querySnapshot = await getDocs(q);
-
-      if (querySnapshot.empty) {
-        // User authenticated but NOT in Firestore - create basic profile
-        console.log("⚠️ User authenticated but not in Firestore, creating profile...");
-        
-        const userDocRef = doc(db, "users", authResult.user.uid);
-        await setDoc(userDocRef, {
-          uid: authResult.user.uid,
-          email: email,
-          role: role,
-          createdAt: new Date().toISOString(),
-          displayName: authResult.user.displayName || email.split('@')[0],
-        });
-        
-        toast({
-          title: "Welcome!",
-          description: "Your profile has been created successfully.",
-        });
-      } else {
-        // User exists in Firestore - verify role
-        const userDoc = querySnapshot.docs[0];
-        const userData = userDoc.data();
-
-        if (userData.role !== role) {
-          // Sign out since role doesn't match
-          await auth.signOut();
-          toast({
-            variant: "destructive",
-            title: "Invalid Role",
-            description: `This account is registered as ${userData.role}, not ${role}. Please login with the correct role.`,
-          });
-          return;
-        }
+      if (err.code === "auth/user-not-found") {
+        message = "No account found with this email address.";
+      } else if (err.code === "auth/invalid-email") {
+        message = "Please enter a valid email address.";
+      } else if (err.code === "auth/too-many-requests") {
+        message = "Too many attempts. Please wait a few minutes and try again.";
       }
 
-      // Track the login activity
-      await trackUserLogin(authResult.user.uid, email);
-
-      // Navigate based on role
-      if (role === "student") navigate("/student-dashboard");
-      else if (role === "teacher") navigate("/teacher-dashboard");
-      else if (role === "admin") navigate("/admin-dashboard");
-
-    } catch (error: any) {
-      console.error("Login Error:", error);
-      
-      // Check if user exists in Firestore for admin password reset
-      if (error.code === "auth/invalid-credential" || error.code === "auth/wrong-password") {
-        const usersRef = collection(db, "users");
-        const q = query(usersRef, where("email", "==", email.toLowerCase()));
-        const querySnapshot = await getDocs(q);
-
-        // If admin exists in Firestore but wrong password, redirect to register for password reset
-        if (!querySnapshot.empty && querySnapshot.docs[0].data().role === "admin") {
-          toast({
-            title: "Invalid Password",
-            description: "Please register again to reset your password.",
-            variant: "destructive",
-          });
-          navigate("/admin-register");
-          return;
-        }
-
-        // For student/teacher or other cases, show generic error
-        toast({
-          variant: "destructive",
-          title: "Login Failed",
-          description: "Invalid email or password. Please try again.",
-        });
-      } else if (error.code === "permission-denied") {
-        toast({
-          variant: "destructive",
-          title: "Permission Denied",
-          description: "Please contact admin to set up your account.",
-        });
-      } else if (error.code === "auth/user-not-found") {
-        toast({
-          variant: "destructive",
-          title: "User Not Found",
-          description: "No account found with this email.",
-        });
-      } else {
-        toast({
-          variant: "destructive",
-          title: "Login Failed",
-          description: error.message || "Something went wrong.",
-        });
-      }
+      toast({
+        variant: "destructive",
+        title: "Password Reset Failed",
+        description: message,
+      });
     }
   };
 
+  // -------------------------
+  // UI
+  // -------------------------
   return (
-    <div 
-      className="min-h-screen flex items-center justify-center p-4"
-      style={{ background: 'linear-gradient(135deg, #f8f7ff, #ffffff)' }}
-    >
-      <div className="w-full max-w-4xl">
-        {/* Login Card */}
-        <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
-          <div className="grid md:grid-cols-2 gap-0">
-            {/* Left Side - Image */}
-            <div className="hidden md:block bg-gradient-to-br from-purple-50 to-blue-50 p-8">
-              <div className="h-full flex items-center justify-center relative">
-                <img 
-                  src={loginImage} 
-                  alt="Login" 
-                  className="w-full h-full object-contain object-top rounded-xl shadow-md"
-                  style={{ imageRendering: 'crisp-edges' }}
-                />
-                {/* Overlay Text */}
-                <div className="absolute inset-x-0 bottom-0 rounded-b-xl bg-white p-6">
-                  <h3 className="text-2xl font-bold text-gray-900 mb-4">Smarter Assessment with AI</h3>
-                  <ul className="space-y-2 text-gray-700">
-                    <li className="flex items-center gap-2">
-                      <span className="text-purple-600">•</span>
-                      <span className="text-sm">Auto-generated quizzes</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-purple-600">•</span>
-                      <span className="text-sm">AI feedback for students</span>
-                    </li>
-                    <li className="flex items-center gap-2">
-                      <span className="text-purple-600">•</span>
-                      <span className="text-sm">Intelligent grading system</span>
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </div>
+    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-purple-50 to-blue-50">
 
-            {/* Right Side - Form */}
-            <div className="p-6 md:p-8 flex flex-col justify-center bg-gradient-to-br from-purple-50/50 to-blue-50/30">
-              {/* Platform Heading */}
-              <div className="mb-6 text-center">
-                <h1 className="text-3xl font-bold text-purple-600 mb-1">IntelliMark</h1>
-                <p className="text-sm text-gray-600">Transform Academic Assessment with AI</p>
-              </div>
+      <div className="w-full max-w-4xl bg-white rounded-2xl shadow-xl overflow-hidden">
 
-              {/* Login Section with Icon on Left */}
-              <div className="mb-4 text-center">
-                <div className="flex items-center justify-center gap-3 mb-3">
-                  <div className="flex items-center justify-center w-12 h-12 bg-purple-100 rounded-full flex-shrink-0">
-                    <GraduationCap className="w-6 h-6 text-purple-600" />
-                  </div>
-                  <h2 className="text-2xl font-bold text-gray-800">Login</h2>
-                </div>
-                <p className="text-sm text-gray-600">Enter your details to sign in</p>
-              </div>
+        <div className="grid md:grid-cols-2">
 
-              <form onSubmit={handleLogin} className="space-y-4">
-                {/* Email Field */}
-                <div className="space-y-1.5">
-                  <Label htmlFor="login-email" className="text-sm font-semibold text-gray-700">
-                    Email
-                  </Label>
-                  <Input 
-                    id="login-email" 
-                    type="email" 
-                    placeholder="example@email.com" 
-                    required 
-                    className="h-11 px-3 border-gray-300 focus:border-purple-500 focus:ring-purple-500"
-                  />
-                </div>
+          {/* LEFT IMAGE SECTION */}
+          <div className="hidden md:block relative">
+            <img
+              src={loginImage}
+              className="h-full w-full object-cover"
+              alt="login"
+            />
 
-                {/* Password Field */}
-                <div className="space-y-1.5">
-                  <Label htmlFor="login-password" className="text-sm font-semibold text-gray-700">
-                    Password
-                  </Label>
-                  <Input 
-                    id="login-password" 
-                    type="password" 
-                    placeholder="••••••••" 
-                    required 
-                    className="h-11 px-3 border-gray-300 focus:border-purple-500 focus:ring-purple-500"
-                  />
-                  <div className="text-right pt-1">
-                    <Button 
-                      type="button" 
-                      variant="link" 
-                      onClick={handleForgotPassword}
-                      className="text-sm text-purple-600 hover:text-purple-700 p-0 h-auto font-medium"
-                    >
-                      Forgot Password?
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Role Field */}
-                <div className="space-y-1.5">
-                  <Label htmlFor="role" className="text-sm font-semibold text-gray-700">
-                    Role
-                  </Label>
-                  <select 
-                    id="role" 
-                    name="role" 
-                    className="w-full h-11 px-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-purple-500 focus:border-transparent bg-white text-gray-700"
-                  >
-                    <option value="student">Student</option>
-                    <option value="teacher">Teacher</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-
-                {/* Login Button */}
-                <Button 
-                  type="submit" 
-                  className="w-full h-11 bg-purple-600 hover:bg-purple-700 text-white font-semibold rounded-lg transition-colors duration-200 mt-2"
-                >
-                  Login
-                </Button>
-              </form>
+            {/* Overlay */}
+            <div className="absolute bottom-0 bg-white/90 p-6 w-full">
+              <h2 className="text-xl font-bold text-gray-900">
+                Smarter Assessment with AI
+              </h2>
+              <p className="text-sm text-gray-600 mt-2">
+                IntelliMark helps automate grading, feedback, and analytics
+              </p>
             </div>
           </div>
-        </div>
 
-        {/* Footer */}
-        <div className="mt-6 text-center">
-          <p className="text-sm text-gray-600">© 2026 IntelliMark – AI Powered Assessment System</p>
+          {/* RIGHT FORM SECTION */}
+          <div className="p-8 flex flex-col justify-center">
+
+            {/* BRANDING */}
+            <div className="text-center mb-4">
+              <h1 className="text-3xl font-bold text-purple-600">
+                IntelliMark
+              </h1>
+              <p className="text-sm text-gray-500">
+                AI Powered Assessment System
+              </p>
+            </div>
+
+            <div className="flex items-center justify-center mb-6 gap-2">
+              <GraduationCap className="text-purple-600" />
+              <h2 className="text-xl font-semibold">Login</h2>
+            </div>
+
+            <form onSubmit={handleLogin} className="space-y-4">
+
+              <div>
+                <Label>Email</Label>
+                <Input id="login-email" name="email" required />
+              </div>
+
+              <div>
+                <Label>Password</Label>
+                <Input name="password" type="password" required />
+              </div>
+
+              <div>
+                <Label>Role</Label>
+                <select name="role" className="w-full border p-2 rounded">
+                  <option value="student">Student</option>
+                  <option value="teacher">Teacher</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+
+              <Button className="w-full" disabled={sendingOtp}>
+                {sendingOtp ? (
+                  <>
+                    <Loader2 className="animate-spin mr-2" size={16} />
+                    Sending OTP...
+                  </>
+                ) : (
+                  "Login"
+                )}
+              </Button>
+
+              <Button
+                type="button"
+                variant="link"
+                onClick={handleForgotPassword}
+              >
+                Forgot Password?
+              </Button>
+            </form>
+          </div>
         </div>
       </div>
+
+      {/* 🔐 OTP MODAL with shadcn InputOTP */}
+      {showOtp && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+
+          <div className="bg-white p-8 rounded-2xl w-[400px] text-center space-y-5 shadow-2xl animate-in fade-in zoom-in">
+
+            <div className="flex justify-center">
+              <div className="bg-purple-100 p-3 rounded-full">
+                <ShieldCheck className="text-purple-600" size={28} />
+              </div>
+            </div>
+
+            <h2 className="text-xl font-bold text-gray-900">2FA Verification</h2>
+
+            <p className="text-sm text-gray-500">
+              Enter the 6-digit code sent to<br />
+              <strong className="text-gray-700">{pendingLogin?.email}</strong>
+            </p>
+
+            <div className="flex justify-center">
+              <InputOTP
+                maxLength={6}
+                value={otp}
+                onChange={(value) => setOtp(value)}
+              >
+                <InputOTPGroup>
+                  <InputOTPSlot index={0} />
+                  <InputOTPSlot index={1} />
+                  <InputOTPSlot index={2} />
+                </InputOTPGroup>
+                <InputOTPSeparator />
+                <InputOTPGroup>
+                  <InputOTPSlot index={3} />
+                  <InputOTPSlot index={4} />
+                  <InputOTPSlot index={5} />
+                </InputOTPGroup>
+              </InputOTP>
+            </div>
+
+            <Button
+              onClick={verifyOtp}
+              className="w-full"
+              disabled={otp.length < 6 || verifying}
+            >
+              {verifying ? (
+                <>
+                  <Loader2 className="animate-spin mr-2" size={16} />
+                  Verifying...
+                </>
+              ) : (
+                "Verify & Login"
+              )}
+            </Button>
+
+            <div className="flex items-center justify-between text-xs text-gray-500">
+              <span>
+                {canResend ? "You can resend now" : `Resend in ${timer}s`}
+              </span>
+              <Button
+                variant="link"
+                size="sm"
+                disabled={!canResend}
+                onClick={resendOtp}
+                className="text-xs p-0 h-auto"
+              >
+                Resend OTP
+              </Button>
+            </div>
+
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setShowOtp(false);
+                setOtp("");
+                setPendingLogin(null);
+                auth.signOut();
+              }}
+              className="text-gray-400 text-xs"
+            >
+              Cancel and go back
+            </Button>
+
+          </div>
+        </div>
+      )}
     </div>
   );
 }

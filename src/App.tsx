@@ -15,6 +15,7 @@ import { testFirebaseConnection, initializeCollections } from "./firebase";
 
 // Route pages are lazy-loaded to keep initial load fast.
 const Login = lazy(() => import("./pages/Login/Login"));
+const ResetPassword = lazy(() => import("./pages/Login/ResetPassword"));
 const AIGrading = lazy(() => import("./pages/TeacherDasboard/AIGrading"));
 const Performance = lazy(() => import("./pages/StudentDasboard/Performance"));
 const ViewReport = lazy(() => import("./pages/ViewReport"));
@@ -97,6 +98,7 @@ const App = () => {
               <Routes>
                 {/* Auth & Landing */}
                 <Route path="/" element={<Login />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
                 <Route path="/admin-register" element={<AdminRegister />} />
 
                 {/* Admin (Owner) Dashboard */}

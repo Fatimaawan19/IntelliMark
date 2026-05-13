@@ -6,6 +6,7 @@
   "scripts": {
     "start": "set OLLAMA_QGEN_TIMEOUT_MS=300000 && node server.js",
     "dev": "set OLLAMA_QGEN_TIMEOUT_MS=300000 && node server.js",
+    "fix-scores": "node scripts/fix-all-scores-consistent.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -21,6 +22,7 @@
     "mongoose": "^9.1.6",
     "multer": "^2.0.2",
     "node-fetch": "^3.3.2",
+    "nodemailer": "^8.0.7",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^1.1.4",
     "pdfkit": "^0.17.2",

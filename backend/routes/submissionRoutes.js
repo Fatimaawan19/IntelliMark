@@ -244,6 +244,16 @@ router.get("/assessment/:assessmentId", submissionController.getAssessmentSubmis
 router.patch("/:submissionId/grade", submissionController.gradeSubmission);
 
 /**
+ * Update submission marks/feedback and sync CLO performance
+ * PATCH /api/submissions/:submissionId/update-marks
+ * Body: { grade?, feedback?, teacherId }
+ * 
+ * Allows editing grades/feedback after initial grading
+ * Automatically re-syncs StudentCLOPerformance data
+ */
+router.patch("/:submissionId/update-marks", submissionController.updateSubmissionMarks);
+
+/**
  * Delete a submission (Student - before grading)
  * DELETE /api/submissions/:submissionId
  * Body: { studentId }

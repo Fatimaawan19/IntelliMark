@@ -201,6 +201,211 @@ function buildFeedbackFromAiReport(report) {
   }
 }
 
+/**
+ * Shared marking loop for both automark and remark batches.
+ *
+ * isRemark=false (AutoMark): probes FAISS for existing chunks; if none found, runs
+ *   prepareOneSubmission(force:false) once. Throws if still no chunks after prep.
+ *
+ * isRemark=true (Re-AutoMark): NEVER re-embeds. Just queries existing chunks and
+ *   runs the LLM. If chunks are missing the submission is skipped with a warning
+ *   so the teacher can run "Extract Submissions" first.
+ */
+async function runMarkingBatch(job, submissions, assessment, questions, opts = {}) {
+  const { isRemark = false } = opts;
+  const verb = isRemark ? "re-mark" : "auto-mark";
+
+  const retrievalProbeQuery =
+    String(questions?.[0]?.questionText || "").trim() ||
+    String(assessment?.title || "").trim() ||
+    "student submission";
+
+  let sampleAnswerOk = false;
+  let courseMaterialOk = false;
+
+  for (let i = 0; i < submissions.length; i++) {
+    const subDoc = submissions[i];
+    const studentName = await resolveStudentName(subDoc);
+    await AutomarkJob.updateOne(
+      { _id: job._id },
+      { $set: { currentSubmissionId: String(subDoc._id), currentStudentName: studentName } }
+    ).catch(() => {});
+
+    // Mark processing status in submissionRaw so the Review page shows progress.
+    await SubmissionRaw.findOneAndUpdate(
+      { submissionId: subDoc._id },
+      {
+        $set: {
+          submissionId: subDoc._id,
+          assessmentId: assessment._id,
+          courseId: subDoc.courseId || null,
+          teacherId: String(assessment.teacherId || ""),
+          studentId: String(subDoc.studentId || ""),
+          automarkStatus: "processing",
+          automarkError: "",
+        },
+        $setOnInsert: { createdAt: new Date() },
+      },
+      { upsert: true, new: false }
+    ).catch(() => {});
+
+    // Probe for existing student chunks in FAISS.
+    await pushLog(job._id, `${studentName}: checking extracted student chunks in vector DB…`);
+    const existingChunks = await querySubmissionChunks(retrievalProbeQuery, {
+      topK: 150,
+      submissionId: String(subDoc._id),
+      assessmentId: String(assessment._id),
+      studentId: String(subDoc.studentId || ""),
+    }).catch(() => []);
+
+    if (!Array.isArray(existingChunks) || existingChunks.length === 0) {
+      if (isRemark) {
+        // Re-mark never triggers re-embedding. Teacher must run "Extract Submissions" first.
+        const warnMsg = `${studentName}: no chunks found — skipping (run "Extract Submissions" first).`;
+        await pushLog(job._id, warnMsg, "warning");
+        await SubmissionRaw.updateOne(
+          { submissionId: subDoc._id },
+          { $set: { automarkStatus: "failed", automarkError: "No extracted chunks. Run Extract Submissions first.", automarkedAt: new Date() } }
+        ).catch(() => {});
+        await AutomarkJob.updateOne({ _id: job._id }, { $set: { processed: i + 1 } }).catch(() => {});
+        continue;
+      }
+
+      // AutoMark: auto-prepare missing chunks (first-time run).
+      await pushLog(job._id, `${studentName}: no chunks found — preparing submission (extract + OCR + chunk + embed)…`, "warning");
+      try {
+        await prepareOneSubmission(subDoc, { force: false });
+      } catch (e) {
+        await pushLog(job._id, `${studentName}: preparation failed: ${e?.message || String(e)}`, "error");
+      }
+
+      const chunksAfterPrep = await querySubmissionChunks(retrievalProbeQuery, {
+        topK: 150,
+        submissionId: String(subDoc._id),
+        assessmentId: String(assessment._id),
+        studentId: String(subDoc.studentId || ""),
+      }).catch(() => []);
+
+      if (!Array.isArray(chunksAfterPrep) || chunksAfterPrep.length === 0) {
+        const errMsg = `${studentName}: no extracted chunks found even after preparation. Check OCR/extraction logs and try again.`;
+        await SubmissionRaw.updateOne(
+          { submissionId: subDoc._id },
+          { $set: { automarkStatus: "failed", automarkError: errMsg, automarkedAt: new Date() } }
+        ).catch(() => {});
+        throw new Error(errMsg);
+      }
+      await pushLog(job._id, `${studentName}: prepared successfully (${chunksAfterPrep.length} chunk(s)).`);
+    } else {
+      await pushLog(job._id, `${studentName}: found ${existingChunks.length} chunk(s) → OK.`);
+    }
+
+    await AutomarkJob.updateOne({ _id: job._id }, { $set: { studentEvidenceExtracted: true } }).catch(() => {});
+
+    // Probe sample answer index once per job.
+    if (!sampleAnswerOk) {
+      try {
+        const probe =
+          String(questions?.[0]?.questionText || "").trim() ||
+          String(assessment?.title || "").trim() ||
+          "sample answer";
+        const sampleChunks = await queryAssessmentReferenceChunks(probe, {
+          topK: 8,
+          assessmentId: String(assessment._id),
+          questionId: "ALL",
+          referenceType: "sample_answer",
+        }).catch(() => []);
+        if (Array.isArray(sampleChunks) && sampleChunks.length > 0) {
+          sampleAnswerOk = true;
+          await AutomarkJob.updateOne({ _id: job._id }, { $set: { sampleAnswerExtracted: true } }).catch(() => {});
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    // Probe course material index once per job.
+    if (!courseMaterialOk) {
+      try {
+        const courseId = String(assessment?.courseId || subDoc?.courseId || "").trim() || null;
+        if (courseId) {
+          const probe =
+            String(questions?.[0]?.questionText || "").trim() ||
+            String(assessment?.title || "").trim() ||
+            "course material";
+          const matChunks = await queryCourseMaterialChunks(probe, { topK: 8, courseId }).catch(() => []);
+          if (Array.isArray(matChunks) && matChunks.length > 0) {
+            courseMaterialOk = true;
+            await AutomarkJob.updateOne(
+              { _id: job._id },
+              { $set: { relevantCourseMaterialChunksExtracted: true } }
+            ).catch(() => {});
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    await pushLog(job._id, `${studentName}: LLM ${verb}ing…`);
+    const report = await automarkOneSubmission(subDoc, assessment, questions, job._id);
+
+    // Track which provider handled this submission.
+    const providerUsed =
+      String(report?.provider || report?.llmProvider || report?.questions?.[0]?.llmProvider || "")
+        .trim()
+        .toLowerCase() || "unknown";
+    if (providerUsed === "groq" || providerUsed === "ollama") {
+      await AutomarkJob.updateOne(
+        { _id: job._id },
+        { $inc: { [`markerCounts.${providerUsed}`]: 1 } }
+      ).catch(() => {});
+    }
+
+    // Persist per-question scores and full report into SubmissionRaw.
+    try {
+      const perQuestionScores = buildPerQuestionScoresFromReport(report);
+      await SubmissionRaw.updateOne(
+        { submissionId: subDoc._id },
+        {
+          $set: {
+            automarkStatus: "completed",
+            automarkError: "",
+            automarkedAt: new Date(),
+            automarkReport: report,
+            perQuestionScores,
+            totalAwardedMarks: Number(report?.totals?.awarded ?? 0) || 0,
+          },
+        }
+      ).catch(() => {});
+    } catch (_) {}
+
+    await pushLog(job._id, `${studentName}: ${verb}ed.`);
+
+    // Store job-level result summary for UI.
+    await AutomarkJob.updateOne(
+      { _id: job._id },
+      {
+        $push: {
+          results: {
+            submissionId: String(subDoc._id),
+            studentName,
+            status: String(report?.needsTeacherReview ? "pending_review" : "graded"),
+            awarded: Number(report?.totals?.awarded ?? 0) || 0,
+            max: Number(report?.totals?.max ?? 0) || 0,
+            confidence: Number(report?.confidence ?? 0) || 0,
+            provider: providerUsed,
+            needsTeacherReview: Boolean(report?.needsTeacherReview),
+            error: String(report?.error || ""),
+            ts: new Date(),
+          },
+        },
+      }
+    ).catch(() => {});
+
+    await AutomarkJob.updateOne({ _id: job._id }, { $set: { processed: i + 1 } }).catch(() => {});
+  }
+}
+
 exports.startAssessmentAutomarkBatch = async (req, res) => {
   try {
     const { assessmentId } = req.params;
@@ -265,159 +470,14 @@ exports.startAssessmentAutomarkBatch = async (req, res) => {
 
     res.status(202).json({ success: true, jobId: String(job._id) });
 
-    // Run async
     setImmediate(async () => {
       await AutomarkJob.updateOne({ _id: job._id }, { $set: { status: "running" } }).catch(() => {});
       await pushLog(job._id, `Batch started for "${assessment.title || assessmentId}".`);
-
       try {
-        for (let i = 0; i < submissions.length; i++) {
-          const subDoc = submissions[i];
-          const studentName = await resolveStudentName(subDoc);
-          await AutomarkJob.updateOne(
-            { _id: job._id },
-            {
-              $set: {
-                currentSubmissionId: String(subDoc._id),
-                currentStudentName: studentName,
-              },
-            }
-          ).catch(() => {});
-
-          // Mark status in submissionRaw so the Review page can show progress/status even if modal closes.
-          await SubmissionRaw.findOneAndUpdate(
-            { submissionId: subDoc._id },
-            {
-              $set: {
-                submissionId: subDoc._id,
-                assessmentId: assessment._id,
-                courseId: subDoc.courseId || null,
-                teacherId,
-                studentId: String(subDoc.studentId || ""),
-                automarkStatus: "processing",
-                automarkError: "",
-              },
-              $setOnInsert: { createdAt: new Date() },
-            },
-            { upsert: true, new: false }
-          ).catch(() => {});
-
-          // AutoMark requires student chunks in FAISS. If missing, auto-run preparation (extract + OCR + chunk + embed)
-          // to avoid forcing teachers to manually click "Extract Submissions" first.
-          await pushLog(job._id, `${studentName}: checking extracted student chunks in vector DB…`);
-          const retrievalProbeQuery =
-            String(questions?.[0]?.questionText || "").trim() ||
-            String(assessment?.title || "").trim() ||
-            "student submission";
-          const existingChunks = await querySubmissionChunks(retrievalProbeQuery, {
-            topK: 150,
-            submissionId: String(subDoc._id),
-            assessmentId: String(assessment._id),
-            studentId: String(subDoc.studentId || ""),
-          }).catch(() => []);
-
-          if (!Array.isArray(existingChunks) || existingChunks.length === 0) {
-            await pushLog(job._id, `${studentName}: no chunks found — preparing submission (extract + OCR + chunk + embed)…`, "warning");
-            try {
-              await prepareOneSubmission(subDoc, { force: false });
-            } catch (e) {
-              const prepMsg = e?.message || String(e);
-              await pushLog(job._id, `${studentName}: preparation failed: ${prepMsg}`, "error");
-            }
-
-            const chunksAfterPrep = await querySubmissionChunks(retrievalProbeQuery, {
-              topK: 150,
-              submissionId: String(subDoc._id),
-              assessmentId: String(assessment._id),
-              studentId: String(subDoc.studentId || ""),
-            }).catch(() => []);
-
-            if (!Array.isArray(chunksAfterPrep) || chunksAfterPrep.length === 0) {
-              const errMsg = `${studentName}: no extracted chunks found even after preparation. Check OCR/extraction logs and try again.`;
-              await SubmissionRaw.updateOne(
-                { submissionId: subDoc._id },
-                { $set: { automarkStatus: "failed", automarkError: errMsg, automarkedAt: new Date() } }
-              ).catch(() => {});
-              throw new Error(errMsg);
-            }
-            await pushLog(job._id, `${studentName}: prepared successfully (${chunksAfterPrep.length} chunk(s)).`, "info");
-          }
-          await pushLog(job._id, `${studentName}: found ${existingChunks.length} chunk(s) → OK.`);
-          await AutomarkJob.updateOne({ _id: job._id }, { $set: { studentEvidenceExtracted: true } }).catch(() => {});
-
-          await pushLog(job._id, `${studentName}: LLM auto-marking…`);
-          const report = await automarkOneSubmission(subDoc, assessment, questions, job._id);
-
-          // Track provider used for this submission (best-effort: use first question's provider if present)
-          const providerUsed =
-            String(report?.provider || report?.llmProvider || report?.questions?.[0]?.llmProvider || "")
-              .trim()
-              .toLowerCase() || "unknown";
-          if (providerUsed === "groq" || providerUsed === "ollama") {
-            await AutomarkJob.updateOne(
-              { _id: job._id },
-              { $inc: { [`markerCounts.${providerUsed}`]: 1 } }
-            ).catch(() => {});
-          }
-
-          // Persist per-question scores + full report into submissionRaw (atomic-ish with submission update already done).
-          try {
-            const perQuestionScores = buildPerQuestionScoresFromReport(report);
-
-            await SubmissionRaw.updateOne(
-              { submissionId: subDoc._id },
-              {
-                $set: {
-                  automarkStatus: "completed",
-                  automarkError: "",
-                  automarkedAt: new Date(),
-                  automarkReport: report,
-                  perQuestionScores,
-                  totalAwardedMarks: Number(report?.totals?.awarded ?? 0) || 0,
-                },
-              }
-            ).catch(() => {});
-          } catch (_) {}
-          await pushLog(job._id, `${studentName}: auto-marked.`);
-
-          // Store job-level result summary for UI/debugging
-          await AutomarkJob.updateOne(
-            { _id: job._id },
-            {
-              $push: {
-                results: {
-                  submissionId: String(subDoc._id),
-                  studentName,
-                  status: String(report?.needsTeacherReview ? "pending_review" : "graded"),
-                  awarded: Number(report?.totals?.awarded ?? 0) || 0,
-                  max: Number(report?.totals?.max ?? 0) || 0,
-                  confidence: Number(report?.confidence ?? 0) || 0,
-                  provider: providerUsed,
-                  needsTeacherReview: Boolean(report?.needsTeacherReview),
-                  error: String(report?.error || ""),
-                  ts: new Date(),
-                },
-              },
-            }
-          ).catch(() => {});
-
-          await AutomarkJob.updateOne(
-            { _id: job._id },
-            { $set: { processed: i + 1 } }
-          ).catch(() => {});
-        }
-
+        await runMarkingBatch(job, submissions, assessment, questions, { isRemark: false });
         await AutomarkJob.updateOne(
           { _id: job._id },
-          {
-            $set: {
-              status: "completed",
-              error: "",
-              finishedAt: new Date(),
-              currentSubmissionId: "",
-              currentStudentName: "",
-            },
-          }
+          { $set: { status: "completed", error: "", finishedAt: new Date(), currentSubmissionId: "", currentStudentName: "" } }
         ).catch(() => {});
         await pushLog(job._id, "Batch completed.", "info");
       } catch (e) {
@@ -437,12 +497,6 @@ exports.startAssessmentRemarkBatch = async (req, res) => {
   try {
     const { assessmentId } = req.params;
     const teacherId = String(req.body?.teacherId || "").trim();
-    // Retry-safe: allow re-marking without re-ingestion (faster, and avoids re-extraction).
-    // Default remains "true" to fully refresh vectors unless caller opts out.
-    const skipReingest = Boolean(req.body?.skipReingest);
-    // Re-mark should usually overwrite existing submission vectors so results are reproducible.
-    // (The python ingestion deletes by submission_id before re-adding chunks.)
-    const forceReingest = !skipReingest;
     if (!assessmentId || !teacherId) {
       return res.status(400).json({ success: false, error: "assessmentId and teacherId are required" });
     }
@@ -460,7 +514,7 @@ exports.startAssessmentRemarkBatch = async (req, res) => {
       return res.status(400).json({ success: false, error: "Assessment has no questions" });
     }
 
-    // Re-mark ALL submissions (including graded) and overwrite aiAnalysis fields (no duplicates).
+    // Re-mark ALL submissions (including already-graded ones) and overwrite AI analysis fields.
     const submissions = await Submission.find({
       assessmentId: assessment._id,
       teacherId,
@@ -482,6 +536,8 @@ exports.startAssessmentRemarkBatch = async (req, res) => {
       relevantCourseMaterialChunksExtracted: false,
       marker: resolveAutomarkProvider(),
       markerCounts: { groq: 0, ollama: 0 },
+      results: [],
+      error: "",
       logs: [{ ts: new Date(), level: "info", message: `Queued re-mark for ${submissions.length} submission(s).` }],
     });
 
@@ -490,118 +546,11 @@ exports.startAssessmentRemarkBatch = async (req, res) => {
     setImmediate(async () => {
       await AutomarkJob.updateOne({ _id: job._id }, { $set: { status: "running" } }).catch(() => {});
       await pushLog(job._id, `Re-mark started for "${assessment.title || assessmentId}".`);
-
       try {
-        // Cache job-level probes so we don't spam retrieval calls
-        let sampleAnswerOk = false;
-        let courseMaterialOk = false;
-
-        for (let i = 0; i < submissions.length; i++) {
-          const subDoc = submissions[i];
-          const studentName = await resolveStudentName(subDoc);
-          await AutomarkJob.updateOne(
-            { _id: job._id },
-            { $set: { currentSubmissionId: String(subDoc._id), currentStudentName: studentName } }
-          ).catch(() => {});
-
-          if (forceReingest) {
-            await pushLog(job._id, `${studentName}: re-ingesting (overwrite old chunks)…`);
-            await prepareOneSubmission(subDoc, { force: true });
-            await pushLog(job._id, `${studentName}: embedded into submission index (vectors replaced).`);
-            await AutomarkJob.updateOne({ _id: job._id }, { $set: { studentEvidenceExtracted: true } }).catch(() => {});
-          } else {
-            await pushLog(job._id, `${studentName}: skipping re-ingestion (retry mode).`);
-
-            // Still verify chunks exist so the job flags reflect reality
-            try {
-              const retrievalProbeQuery =
-                String(questions?.[0]?.questionText || "").trim() ||
-                String(assessment?.title || "").trim() ||
-                "student submission";
-              const existingChunks = await querySubmissionChunks(retrievalProbeQuery, {
-                topK: 50,
-                submissionId: String(subDoc._id),
-                assessmentId: String(assessment._id),
-                studentId: String(subDoc.studentId || ""),
-              }).catch(() => []);
-              if (Array.isArray(existingChunks) && existingChunks.length > 0) {
-                await AutomarkJob.updateOne({ _id: job._id }, { $set: { studentEvidenceExtracted: true } }).catch(() => {});
-              }
-            } catch {
-              // ignore
-            }
-          }
-
-          // Best-effort: probe reference + course material once (job-level readiness)
-          if (!sampleAnswerOk) {
-            try {
-              const probe =
-                String(questions?.[0]?.questionText || "").trim() ||
-                String(assessment?.title || "").trim() ||
-                "sample answer";
-              const sampleChunks = await queryAssessmentReferenceChunks(probe, {
-                topK: 8,
-                assessmentId: String(assessment._id),
-                questionId: "ALL",
-                referenceType: "sample_answer",
-              }).catch(() => []);
-              if (Array.isArray(sampleChunks) && sampleChunks.length > 0) {
-                sampleAnswerOk = true;
-                await AutomarkJob.updateOne({ _id: job._id }, { $set: { sampleAnswerExtracted: true } }).catch(() => {});
-              }
-            } catch {
-              // ignore
-            }
-          }
-
-          if (!courseMaterialOk) {
-            try {
-              const courseId = String(assessment?.courseId || subDoc?.courseId || "").trim() || null;
-              if (courseId) {
-                const probe =
-                  String(questions?.[0]?.questionText || "").trim() ||
-                  String(assessment?.title || "").trim() ||
-                  "course material";
-                const matChunks = await queryCourseMaterialChunks(probe, { topK: 8, courseId }).catch(() => []);
-                if (Array.isArray(matChunks) && matChunks.length > 0) {
-                  courseMaterialOk = true;
-                  await AutomarkJob.updateOne(
-                    { _id: job._id },
-                    { $set: { relevantCourseMaterialChunksExtracted: true } }
-                  ).catch(() => {});
-                }
-              }
-            } catch {
-              // ignore
-            }
-          }
-
-          await pushLog(job._id, `${studentName}: LLM re-marking…`);
-          const report = await automarkOneSubmission(subDoc, assessment, questions, job._id);
-          if (report?.failed) {
-            throw new Error(report?.error || "LLM failed during re-mark");
-          }
-
-          // Track provider used for this submission (best-effort)
-          const providerUsed =
-            String(report?.provider || report?.llmProvider || report?.questions?.[0]?.llmProvider || "")
-              .trim()
-              .toLowerCase() || "unknown";
-          if (providerUsed === "groq" || providerUsed === "ollama") {
-            await AutomarkJob.updateOne(
-              { _id: job._id },
-              { $inc: { [`markerCounts.${providerUsed}`]: 1 } }
-            ).catch(() => {});
-          }
-
-          await pushLog(job._id, `${studentName}: re-marked (AI report replaced).`);
-
-          await AutomarkJob.updateOne({ _id: job._id }, { $set: { processed: i + 1 } }).catch(() => {});
-        }
-
+        await runMarkingBatch(job, submissions, assessment, questions, { isRemark: true });
         await AutomarkJob.updateOne(
           { _id: job._id },
-          { $set: { status: "completed", finishedAt: new Date(), currentSubmissionId: "", currentStudentName: "" } }
+          { $set: { status: "completed", error: "", finishedAt: new Date(), currentSubmissionId: "", currentStudentName: "" } }
         ).catch(() => {});
         await pushLog(job._id, "Re-mark completed.", "info");
       } catch (e) {
@@ -827,4 +776,3 @@ exports.getAutomarkJob = async (req, res) => {
     return res.status(500).json({ success: false, error: "Failed to fetch job", details: error.message });
   }
 };
-

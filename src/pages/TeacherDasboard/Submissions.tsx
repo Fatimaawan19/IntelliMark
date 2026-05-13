@@ -15,6 +15,7 @@ import {
   User,
   AlertCircle,
   Scan,
+  CheckCircle,
 } from "lucide-react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -79,6 +80,21 @@ const Submissions = () => {
   const samplePollCancelRef = useRef(false);
   const batchPollCancelRef = useRef(false);
   const autoOpenHandledRef = useRef(false);
+
+  // --- Sample-upload dialog ---
+  const [sampleDialogOpen, setSampleDialogOpen] = useState(false);
+  const [sampleDialogTarget, setSampleDialogTarget] = useState<{ assessmentId: string; assessmentTitle: string; courseCode: string } | null>(null);
+  const [sampleDialogFile, setSampleDialogFile] = useState<File | null>(null);
+  const [sampleDialogUploading, setSampleDialogUploading] = useState(false);
+  const [sampleDialogMeta, setSampleDialogMeta] = useState<any>(null);
+  const sampleDialogPollCancelRef = useRef(false);
+
+  // --- Marking dialog (Extract + AutoMark) ---
+  const [markingDialogOpen, setMarkingDialogOpen] = useState(false);
+  const [markingDialogTarget, setMarkingDialogTarget] = useState<{ assessmentId: string; assessmentTitle: string; courseCode: string } | null>(null);
+  const [markingDialogMeta, setMarkingDialogMeta] = useState<any>(null);
+  const [markingDialogLoading, setMarkingDialogLoading] = useState(false);
+  const [markingDialogAction, setMarkingDialogAction] = useState<"automark" | "remark">("automark");
 
   useEffect(() => {
     // Allow other screens (e.g., AI Grading) to deep-link into the existing AutoMark dialog.
@@ -575,6 +591,26 @@ const Submissions = () => {
     return () => {};
   }, [batchOpen]);
 
+  useEffect(() => {
+    if (!sampleDialogOpen) sampleDialogPollCancelRef.current = true;
+    return () => { sampleDialogPollCancelRef.current = true; };
+  }, [sampleDialogOpen]);
+
+  // Pre-fetch sample status for all visible assessments so the brain button is correctly enabled/disabled.
+  useEffect(() => {
+    if (!teacherId || courses.length === 0) return;
+    courses.forEach((c) => {
+      (["quiz", "assignment"] as const).forEach((t) => {
+        c.types[t].assessments.forEach((a) => {
+          if (!sampleStatusByAssessment[a.assessmentId]) {
+            getSampleStatus(a.assessmentId).catch(() => {});
+          }
+        });
+      });
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courses]);
+
   const openReview = async (assessmentId: string, submissions: GroupedSubmission[], submissionId: string) => {
     // queue = ALL submissions (graded + ungraded) so teacher can step through everyone
     const queue = Array.isArray(submissions) ? submissions : [];
@@ -590,6 +626,29 @@ const Submissions = () => {
         teacherView: true,
       },
     });
+  };
+
+  const openSubmissionFile = async (submissionId: string) => {
+    try {
+      const res = await fetch(`http://localhost:5000/api/submissions/${encodeURIComponent(submissionId)}/content?teacherId=${encodeURIComponent(teacherId)}`);
+      const data = await res.json();
+      if (!res.ok || !data?.success) {
+        throw new Error(data?.error || "Failed to load submission files");
+      }
+
+      const file = Array.isArray(data.files) && data.files[0] ? data.files[0] : null;
+      if (!file || !file.fileUrl) {
+        throw new Error("No submission file available to open");
+      }
+
+      window.open(String(file.fileUrl), "_blank", "noopener,noreferrer");
+    } catch (e: any) {
+      toast({
+        title: "Unable to open submission",
+        description: e?.message || String(e),
+        variant: "destructive",
+      });
+    }
   };
 
   const openExtractFlow = async (assessment: GroupedAssessment) => {
@@ -733,6 +792,82 @@ const Submissions = () => {
         description: e?.message || String(e),
         variant: "destructive",
       });
+    }
+  };
+
+  // Opens the sample-answer upload dialog for an assessment.
+  const openSampleDialog = async (assessment: GroupedAssessment, courseCode: string) => {
+    setSampleDialogOpen(true);
+    setSampleDialogTarget({ assessmentId: assessment.assessmentId, assessmentTitle: assessment.assessmentTitle, courseCode });
+    setSampleDialogFile(null);
+    setSampleDialogMeta(null);
+    sampleDialogPollCancelRef.current = false;
+    try {
+      const { meta } = await getSampleStatus(assessment.assessmentId);
+      setSampleDialogMeta(meta);
+    } catch {}
+  };
+
+  const doUploadSampleInDialog = async () => {
+    if (!sampleDialogTarget?.assessmentId) return;
+    if (!sampleDialogFile) {
+      toast({ title: "File required", description: "Choose a PDF, DOCX, JPG, or PNG file.", variant: "destructive" });
+      return;
+    }
+    setSampleDialogUploading(true);
+    sampleDialogPollCancelRef.current = false;
+    try {
+      const currentStatus = String(sampleDialogMeta?.sampleAnswerStatus || "").toLowerCase();
+      if (currentStatus === "ready" || currentStatus === "pending") {
+        const ok = window.confirm("A sample answer already exists for this assessment. Uploading will REPLACE it. Continue?");
+        if (!ok) return;
+      }
+      const fd = new FormData();
+      fd.append("sampleAnswerFile", sampleDialogFile, sampleDialogFile.name);
+      const replace = (currentStatus === "ready" || currentStatus === "pending") ? "true" : "false";
+      const res = await fetch(
+        `http://localhost:5000/api/assessments/${encodeURIComponent(sampleDialogTarget.assessmentId)}/upload-sample-answer?replace=${replace}`,
+        { method: "POST", body: fd }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.success) throw new Error(data?.error || `Upload failed (${res.status})`);
+
+      toast({ title: "Uploaded — extracting…", description: "CLO, rubric, and text extraction has started." });
+
+      // Poll until sample + rubric + CLO are fully extracted.
+      const startedAt = Date.now();
+      while (!sampleDialogPollCancelRef.current) {
+        const { status, meta } = await getSampleStatus(sampleDialogTarget.assessmentId);
+        setSampleDialogMeta(meta);
+        if (status === "ready" || status === "failed") break;
+        if (Date.now() - startedAt > 6 * 60 * 1000) break;
+        await new Promise((r) => setTimeout(r, 1500));
+      }
+    } catch (e: any) {
+      toast({ title: "Upload failed", description: e?.message || String(e), variant: "destructive" });
+    } finally {
+      setSampleDialogUploading(false);
+    }
+  };
+
+  // Opens the Extract + AutoMark dialog (requires sample answer already in Mongo).
+  const openMarkingDialog = async (
+    assessment: GroupedAssessment,
+    courseCode: string,
+    action: "automark" | "remark" = "automark"
+  ) => {
+    setMarkingDialogOpen(true);
+    setMarkingDialogTarget({ assessmentId: assessment.assessmentId, assessmentTitle: assessment.assessmentTitle, courseCode });
+    setMarkingDialogMeta(null);
+    setMarkingDialogLoading(true);
+    setMarkingDialogAction(action);
+    try {
+      const { meta } = await getSampleStatus(assessment.assessmentId);
+      setMarkingDialogMeta(meta);
+    } catch {
+      setMarkingDialogMeta(null);
+    } finally {
+      setMarkingDialogLoading(false);
     }
   };
 
@@ -880,9 +1015,9 @@ const Submissions = () => {
                                   <AccordionContent className="px-5 pb-5 space-y-4">
                                     <div className="flex flex-col sm:flex-row gap-3 sm:items-center sm:justify-between">
                                       <div className="text-sm text-muted-foreground">
-                                        Upload sample answer once, then run extraction and AutoMark from the upload dialog.
-                        </div>
-                                      <div className="flex gap-2">
+                                        Upload sample answer to extract CLO &amp; rubric, then run AutoMark per assessment.
+                                      </div>
+                                      <div className="flex gap-2 flex-wrap">
                                         <Button
                                           variant="secondary"
                                           className="bg-primary/10 hover:bg-primary/15 text-primary h-11 text-base px-5"
@@ -891,35 +1026,50 @@ const Submissions = () => {
                                           <Scan className="h-4 w-4 mr-2" />
                                           Digitize (OCR)
                                         </Button>
-                                        {Number(assessment?.stats?.pending ?? 0) === 0 && Number(assessment?.stats?.graded ?? 0) > 0 ? (
+
+                                        {/* Sample Answer button — turns green once uploaded */}
+                                        {sampleStatusByAssessment[assessment.assessmentId] === "ready" ? (
                                           <Button
-                                            variant="secondary"
-                                            className="bg-primary/10 hover:bg-primary/15 text-primary h-11 text-base px-5"
-                                            onClick={() =>
-                                              openAutoMark(assessment.assessmentId, assessment.assessmentTitle, course.courseCode, {
-                                                primaryAction: "remark",
-                                              })
-                                            }
+                                            variant="outline"
+                                            className="border-emerald-500/40 text-emerald-600 hover:bg-emerald-50 h-11 text-base px-5"
+                                            onClick={() => openSampleDialog(assessment, course.courseCode)}
                                           >
-                                            <Brain className="h-4 w-4 mr-2" />
-                                            Re-AutoMark
+                                            <CheckCircle className="h-4 w-4 mr-2" />
+                                            Uploaded
                                           </Button>
                                         ) : (
+                                          <Button
+                                            variant="secondary"
+                                            className="bg-primary/10 hover:bg-primary/10 text-primary h-11 text-base px-5"
+                                            onClick={() => openSampleDialog(assessment, course.courseCode)}
+                                          >
+                                            <Upload className="h-4 w-4 mr-2" />
+                                            Sample Answer
+                                          </Button>
+                                        )}
+
+                                        {/* Brain button — disabled until sample answer is in Mongo */}
                                         <Button
                                           variant="secondary"
-                                          className="bg-primary/10 hover:bg-primary/15 text-primary h-11 text-base px-5"
-                                            onClick={() =>
-                                              openAutoMark(assessment.assessmentId, assessment.assessmentTitle, course.courseCode, {
-                                                primaryAction: "automark",
-                                              })
-                                            }
+                                          className="bg-primary/10 hover:bg-primary/15 text-primary h-11 text-base px-5 disabled:opacity-50 disabled:cursor-not-allowed"
+                                          disabled={sampleStatusByAssessment[assessment.assessmentId] !== "ready"}
+                                          onClick={() =>
+                                            openMarkingDialog(
+                                              assessment,
+                                              course.courseCode,
+                                              Number(assessment?.stats?.pending ?? 0) === 0 && Number(assessment?.stats?.graded ?? 0) > 0
+                                                ? "remark"
+                                                : "automark"
+                                            )
+                                          }
                                         >
                                           <Brain className="h-4 w-4 mr-2" />
-                                          AutoMark
+                                          {Number(assessment?.stats?.pending ?? 0) === 0 && Number(assessment?.stats?.graded ?? 0) > 0
+                                            ? "Re-AutoMark"
+                                            : "AutoMark"}
                                         </Button>
-                                        )}
-                        </div>
-                      </div>
+                                      </div>
+                                    </div>
 
                                     <div className="space-y-3">
                                       {assessment.submissions.map((s) => {
@@ -971,19 +1121,20 @@ const Submissions = () => {
                                             </div>
                                           </div>
                                           <div className="flex gap-2">
+                        {String(s.status || "") === "graded" ? (
+                          <Button
+                            variant="outline"
+                            className="border-primary/30 h-11 text-base px-5"
+                            onClick={() => openReview(assessment.assessmentId, assessment.submissions, s.submissionId)}
+                          >
+                            Review
+                          </Button>
+                        ) : null}
                         <Button
-                          variant="outline"
-                                              className="border-primary/30 h-11 text-base px-5"
-                                              onClick={() => openReview(assessment.assessmentId, assessment.submissions, s.submissionId)}
-                                              disabled={!canReview}
+                          className="bg-gradient-primary text-primary-foreground h-11 text-base px-5"
+                          onClick={() => openSubmissionFile(s.submissionId)}
                         >
-                          Review
-                        </Button>
-                        <Button
-                                              className="bg-gradient-primary text-primary-foreground h-11 text-base px-5"
-                                              onClick={() => openReview(assessment.assessmentId, assessment.submissions, s.submissionId)}
-                        >
-                                              Open
+                          Open
                         </Button>
                       </div>
                     </div>
@@ -1012,6 +1163,174 @@ const Submissions = () => {
           </Card>
         </div>
       </main>
+
+      {/* ===== Sample Answer Upload Dialog ===== */}
+      <Dialog open={sampleDialogOpen} onOpenChange={(open) => { if (!open) sampleDialogPollCancelRef.current = true; setSampleDialogOpen(open); }}>
+        <DialogContent className="max-w-lg p-0 overflow-hidden">
+          <DialogHeader>
+            <div className="px-6 pt-6 pb-4 bg-gradient-to-r from-primary/5 to-primary/10 border-b border-primary/10">
+              <DialogTitle className="text-xl font-bold text-gray-900">Sample Answer</DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">
+                {sampleDialogTarget?.assessmentTitle} &bull; PDF, DOCX, JPG, JPEG, PNG
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+          <div className="px-6 py-5 space-y-4 bg-white">
+            <div className="rounded-xl border border-primary/10 bg-gradient-to-r from-white to-primary/5 p-4 space-y-3">
+              <div className="text-sm font-semibold text-gray-900">Upload Sample Answer File</div>
+              <Input
+                type="file"
+                accept=".pdf,.docx,.jpg,.jpeg,.png"
+                onChange={(e) => setSampleDialogFile(e.target.files?.[0] || null)}
+                disabled={sampleDialogUploading}
+              />
+              <Button
+                className="w-full h-11 text-base"
+                onClick={doUploadSampleInDialog}
+                disabled={sampleDialogUploading || !sampleDialogFile}
+              >
+                {sampleDialogUploading ? "Uploading & Extracting…" : "Upload Sample Answer"}
+              </Button>
+            </div>
+
+            <div className="rounded-xl border border-primary/10 bg-muted/40 p-4 space-y-3">
+              <div className="text-sm font-semibold text-gray-900">Extraction Status</div>
+              <div className="flex flex-wrap gap-2">
+                <Badge variant={statusBadgeVariant(sampleDialogMeta?.sampleAnswerStatus) as any}>
+                  Sample: {statusLabel(sampleDialogMeta?.sampleAnswerStatus)}
+                </Badge>
+                <Badge variant={statusBadgeVariant(sampleDialogMeta?.rubricStatus) as any}>
+                  Rubric: {statusLabel(sampleDialogMeta?.rubricStatus)}
+                </Badge>
+                <Badge variant={statusBadgeVariant(sampleDialogMeta?.cloStatus) as any}>
+                  CLO: {statusLabel(sampleDialogMeta?.cloStatus)}
+                </Badge>
+              </div>
+              {sampleDialogMeta?.automarkReady && (
+                <div className="text-sm font-semibold text-emerald-600 flex items-center gap-1.5">
+                  <CheckCircle className="h-4 w-4" />
+                  All extracted — ready for AutoMark
+                </div>
+              )}
+              {!sampleDialogMeta && (
+                <div className="text-xs text-muted-foreground">Loading status…</div>
+              )}
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* ===== Marking Dialog (Extract + AutoMark) ===== */}
+      <Dialog open={markingDialogOpen} onOpenChange={setMarkingDialogOpen}>
+        <DialogContent className="max-w-xl p-0 overflow-hidden">
+          <DialogHeader>
+            <div className="px-6 pt-6 pb-4 bg-gradient-to-r from-primary/5 to-primary/10 border-b border-primary/10">
+              <DialogTitle className="text-xl font-bold text-gray-900 flex items-center gap-2">
+                <Brain className="h-5 w-5 text-primary" />
+                {markingDialogAction === "remark" ? "Re-AutoMark" : "AutoMark"} &mdash; {markingDialogTarget?.assessmentTitle}
+              </DialogTitle>
+              <DialogDescription className="text-sm text-muted-foreground">
+                Extract student submissions then run AI grading
+              </DialogDescription>
+            </div>
+          </DialogHeader>
+          <div className="px-6 py-5 space-y-4 bg-white">
+            {markingDialogLoading ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+                Loading assessment status…
+              </div>
+            ) : (
+              <>
+                <div className="rounded-xl border border-primary/10 bg-muted/40 p-4 space-y-3">
+                  <div className="text-sm font-semibold text-gray-900">Readiness</div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge variant={statusBadgeVariant(markingDialogMeta?.sampleAnswerStatus) as any}>
+                      Sample: {statusLabel(markingDialogMeta?.sampleAnswerStatus)}
+                    </Badge>
+                    <Badge variant={statusBadgeVariant(markingDialogMeta?.rubricStatus) as any}>
+                      Rubric: {statusLabel(markingDialogMeta?.rubricStatus)}
+                    </Badge>
+                    <Badge variant={statusBadgeVariant(markingDialogMeta?.cloStatus) as any}>
+                      CLO: {statusLabel(markingDialogMeta?.cloStatus)}
+                    </Badge>
+                  </div>
+                  {!markingDialogMeta?.automarkReady && (
+                    <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      Upload &amp; extract a sample answer first before running AutoMark.
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <Button
+                    variant="secondary"
+                    className="bg-primary/10 hover:bg-primary/15 text-primary h-11 text-base"
+                    disabled={batchLoading || !markingDialogMeta?.automarkReady}
+                    onClick={async () => {
+                      if (!markingDialogTarget?.assessmentId) return;
+                      await startAndPollJob(
+                        `http://localhost:5000/api/assessments/${encodeURIComponent(markingDialogTarget.assessmentId)}/extract-batch`,
+                        () => {
+                          toast({ title: "Extraction completed", description: "All pending submissions were extracted." });
+                          fetchTeacherGrouped(teacherId);
+                        },
+                        async () => {
+                          try {
+                            const { meta } = await getSampleStatus(markingDialogTarget.assessmentId);
+                            setMarkingDialogMeta(meta);
+                          } catch {}
+                        }
+                      );
+                    }}
+                  >
+                    <Upload className="h-4 w-4 mr-2" />
+                    Extract Submissions
+                  </Button>
+
+                  <Button
+                    className="bg-gradient-primary text-primary-foreground h-11 text-base"
+                    disabled={batchLoading || !markingDialogMeta?.automarkReady}
+                    onClick={async () => {
+                      if (!markingDialogTarget?.assessmentId) return;
+                      await startAndPollJob(
+                        `http://localhost:5000/api/assessments/${encodeURIComponent(markingDialogTarget.assessmentId)}/${
+                          markingDialogAction === "remark" ? "remark-batch" : "automark-batch"
+                        }`,
+                        () => {
+                          toast({
+                            title: markingDialogAction === "remark" ? "Re-AutoMark completed" : "AutoMark completed",
+                            description:
+                              markingDialogAction === "remark"
+                                ? "All submissions were re-graded."
+                                : "All pending submissions were auto-marked.",
+                          });
+                          fetchTeacherGrouped(teacherId);
+                        },
+                        async () => {
+                          try {
+                            const { meta } = await getSampleStatus(markingDialogTarget.assessmentId);
+                            setMarkingDialogMeta(meta);
+                          } catch {}
+                        }
+                      );
+                    }}
+                  >
+                    <Brain className="h-4 w-4 mr-2" />
+                    {markingDialogAction === "remark" ? "Re-AutoMark" : "AutoMark"}
+                  </Button>
+                </div>
+
+                {!markingDialogMeta?.automarkReady && (
+                  <div className="text-xs text-muted-foreground">
+                    Both buttons unlock after the sample answer, rubric, and CLO are fully extracted.
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={autoMarkOpen} onOpenChange={setAutoMarkOpen}>
           <DialogContent className="max-w-2xl p-0 overflow-hidden">

@@ -1012,6 +1012,19 @@ exports.gradeSubmission = async (req, res) => {
 
     console.log(`✅ Submission ${submissionId} graded: ${grade}/${submission.maxGrade}`);
 
+    // Update CLO-wise performance (async, non-blocking)
+    setImmediate(async () => {
+      try {
+        const cloPerformanceService = require("../utils/cloPerformanceService");
+        const updatedCLOs = await cloPerformanceService.updateCLOPerformanceForSubmission(submissionId);
+        if (updatedCLOs.length > 0) {
+          console.log(`✅ Updated CLO performance for ${updatedCLOs.length} CLOs: ${updatedCLOs.map(c => `CLO${c.cloNumber}`).join(', ')}`);
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to update CLO performance:', error.message);
+      }
+    });
+
     // Send notification to student (async)
     setImmediate(async () => {
       try {
@@ -1038,6 +1051,85 @@ exports.gradeSubmission = async (req, res) => {
   } catch (error) {
     console.error("❌ Error grading submission:", error);
     res.status(500).json({ error: "Failed to grade submission" });
+  }
+};
+
+/**
+ * Update submission marks/feedback and sync CLO performance
+ * PATCH /api/submissions/:submissionId/update-marks
+ * 
+ * Allows teacher to edit grades/feedback after initial grading
+ * Automatically syncs CLO performance data
+ */
+exports.updateSubmissionMarks = async (req, res) => {
+  try {
+    const { submissionId } = req.params;
+    const { grade, feedback, teacherId } = req.body;
+
+    const submission = await Submission.findById(submissionId);
+    if (!submission) {
+      return res.status(404).json({ error: "Submission not found" });
+    }
+
+    // Validate grade
+    if (grade !== undefined && (grade < 0 || grade > submission.maxGrade)) {
+      return res.status(400).json({ 
+        error: `Grade must be between 0 and ${submission.maxGrade}` 
+      });
+    }
+
+    const updates = {};
+    
+    // Only update fields that are provided
+    if (grade !== undefined && grade !== null) {
+      updates.grade = grade;
+    }
+    if (feedback !== undefined && feedback !== null) {
+      updates.feedback = feedback;
+    }
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ 
+        error: "No updates provided (grade or feedback required)" 
+      });
+    }
+
+    // Update submission
+    Object.assign(submission, updates);
+    submission.lastUpdated = new Date();
+    submission.updatedBy = teacherId;
+    
+    await submission.save();
+
+    console.log(`✅ Updated submission ${submissionId}: grade=${updates.grade}, feedback=${updates.feedback ? 'provided' : 'unchanged'}`);
+
+    // Sync CLO performance (async)
+    setImmediate(async () => {
+      try {
+        const cloPerformanceService = require("../utils/cloPerformanceService");
+        const updatedCLOs = await cloPerformanceService.updateCLOPerformanceForSubmission(submissionId);
+        if (updatedCLOs.length > 0) {
+          console.log(`✅ Re-synced CLO performance for ${updatedCLOs.length} CLOs after mark update`);
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to sync CLO performance:', error.message);
+      }
+    });
+
+    res.json({
+      success: true,
+      message: "Submission marks updated and CLO performance synced",
+      submission: {
+        id: submission._id,
+        grade: submission.grade,
+        maxGrade: submission.maxGrade,
+        feedback: submission.feedback,
+        status: submission.status
+      }
+    });
+
+  } catch (error) {
+    console.error("❌ Error updating submission marks:", error);
+    res.status(500).json({ error: "Failed to update submission marks" });
   }
 };
 
@@ -2035,11 +2127,40 @@ exports.checkPlagiarism = async (req, res) => {
       return res.status(403).json({ success: false, error: "Forbidden" });
     }
 
+    // Check if there are other submissions in this assessment (for intelligent plagiarism detection)
+    const otherSubmissionCount = await Submission.countDocuments({
+      assessmentId: sub.assessmentId,
+      _id: { $ne: submissionId },
+      assessmentType: "assignment",
+    }).catch(() => 1);
+
+    const isOnlySubmission = otherSubmissionCount === 0;
+    const detectionMode = isOnlySubmission ? "external_only" : "both_internal_external";
+
+    console.log(
+      `[PLAGIARISM] ${sub.studentName || sub.studentId} (${submissionId}): Mode=${detectionMode}, OtherSubmissions=${otherSubmissionCount}`
+    );
+
     // If we already computed a plagiarism report, return it as-is to keep results stable.
     // Teachers can still "re-run" from UI, but unless force=true, the persisted report is returned.
     if (!force && sub.plagiarismReport && typeof sub.plagiarismReport === "object") {
       const r = sub.plagiarismReport || {};
-      return res.status(200).json({ success: true, cached: true, ...(r || {}) });
+      // Ensure backward compatibility: compute missing fields from existing data
+      const internalScore = r.internalScore ?? r.bestMatchPercent ?? 0;
+      const aiScore = r.aiScore ?? 0;
+      const overallScore = r.overallScore ?? Math.round(internalScore * 0.6 + aiScore * 0.4);
+      const riskLevel = r.riskLevel ?? (overallScore >= 60 ? "high" : overallScore >= 30 ? "medium" : "low");
+
+      return res.status(200).json({
+        success: true,
+        cached: true,
+        detectionMode,
+        internalScore,
+        aiScore,
+        overallScore,
+        riskLevel,
+        ...(r || {})
+      });
     }
 
     // Back-compat for older rows: if we have a recorded plagiarism score already,
@@ -2066,17 +2187,24 @@ exports.checkPlagiarism = async (req, res) => {
           : computePenaltyPercent(best);
 
       const assessmentId = String(sub.assessmentId?._id || sub.assessmentId || "");
+      const aiScore = typeof sub.plagiarismAiScore === "number" ? sub.plagiarismAiScore : 0;
+      const overallScore = Math.round(best * 0.6 + aiScore * 0.4);
+      const riskLevel = overallScore >= 60 ? "high" : overallScore >= 30 ? "medium" : "low";
+
       const legacyReport = {
         submissionId: String(sub._id),
         assessmentId,
+        internalScore: best,
         bestMatchPercent: best,
+        aiScore,
+        overallScore,
+        riskLevel,
         penalty: {
           penaltyPercent,
           band:
             best < 30 ? "0-30" :
             best < 60 ? "30-60" :
             best < 80 ? "60-80" : "80-100",
-          // UI hides this text; keep for data completeness.
           action:
             best < 30 ? "No issue" :
             best < 60 ? "Deduct 10–20% marks" :
@@ -2088,6 +2216,7 @@ exports.checkPlagiarism = async (req, res) => {
             ? sub.plagiarismAdjustedGrade
             : null,
         matches: [],
+        isGptGenerated: Boolean(sub.plagiarismIsGptGenerated),
         meta: { phase: "legacy_cached", normalized: "unknown" },
         computedAt: recordedAt.toISOString(),
       };
@@ -2102,7 +2231,15 @@ exports.checkPlagiarism = async (req, res) => {
         }
       ).catch(() => {});
 
-      return res.status(200).json({ success: true, cached: true, ...(legacyReport || {}) });
+      return res.status(200).json({
+        success: true,
+        cached: true,
+        internalScore: best,
+        aiScore,
+        overallScore,
+        riskLevel,
+        ...(legacyReport || {})
+      });
     }
 
     const rawDoc = await SubmissionRaw.findOne({ submissionId: sub._id })
@@ -2155,10 +2292,15 @@ exports.checkPlagiarism = async (req, res) => {
     const emptyReport = {
         submissionId: String(sub._id),
         assessmentId: String(sub.assessmentId?._id || sub.assessmentId || ""),
+        internalScore: 0,
         bestMatchPercent: 0,
+        aiScore: 0,
+        overallScore: 0,
+        riskLevel: "low",
         penalty: { penaltyPercent: 0, band: "0-30", action: "No extracted text" },
         gradeAfterPlagiarism: null,
         matches: [],
+        isGptGenerated: false,
         meta: { phase: "no_extracted_text", message: "No extracted text found. Run extraction first." },
         computedAt: new Date().toISOString(),
       };
@@ -2171,12 +2313,18 @@ exports.checkPlagiarism = async (req, res) => {
           plagiarismCheckedAt: new Date(),
           plagiarismPenaltyPercent: 0,
           plagiarismAdjustedGrade: null,
+          plagiarismAiScore: 0,
+          plagiarismIsGptGenerated: false,
           plagiarismReport: emptyReport,
         },
       }
       ).catch(() => {});
       return res.status(200).json({
         success: true,
+        internalScore: 0,
+        aiScore: 0,
+        overallScore: 0,
+        riskLevel: "low",
         ...(emptyReport || {}),
       });
     }
@@ -2186,45 +2334,39 @@ exports.checkPlagiarism = async (req, res) => {
     const currentStudentId = String(sub.studentId || "");
     const currentSubmissionId = String(sub._id || "");
 
-    // Retrieve a larger pool then filter locally to ensure we can pick top 5 after exclusions.
-    const candidates = await querySubmissionChunks(queryTextForPlagiarism, {
-      topK: 50,
-      assessmentId,
-    });
+    // If this is the only submission, skip internal plagiarism check (no other students to compare against)
+    let candidates = [];
+    if (!isOnlySubmission) {
+      console.log(`[PLAGIARISM] ${submissionId}: Checking for internal plagiarism (student matches)...`);
+      try {
+        // Retrieve a larger pool then filter locally to ensure we can pick top 5 after exclusions.
+        candidates = await querySubmissionChunks(queryTextForPlagiarism, {
+          topK: 50,
+          assessmentId,
+        });
+        console.log(`[PLAGIARISM] ${submissionId}: Found ${(candidates || []).length} candidate chunks`);
+      } catch (err) {
+        console.error(`[PLAGIARISM] ${submissionId}: Internal plagiarism check error: ${err.message}`);
+        candidates = [];
+      }
+    } else {
+      console.log(`[PLAGIARISM] ${submissionId}: Only submission in assessment - skipping internal plagiarism check`);
+    }
 
     const filtered = (Array.isArray(candidates) ? candidates : [])
       .filter((c) => c && c.metadata)
       .filter((c) => String(c.metadata?.student_id || "") !== currentStudentId)
       .filter((c) => String(c.metadata?.submission_id || "") !== currentSubmissionId);
 
-    if (!filtered.length) {
-      // First assignment / no other students yet.
-      const emptyReport = {
-        submissionId: String(sub._id),
-        assessmentId,
-        bestMatchPercent: 0,
-        penalty: { penaltyPercent: 0, band: "0-30", action: "No issue" },
-        gradeAfterPlagiarism: null,
-        matches: [],
-        meta: { phase: "no_candidates", message: "No other student chunks found for this assessment yet." },
-        computedAt: new Date().toISOString(),
-      };
-      await Submission.updateOne(
-        { _id: sub._id },
-        {
-          $set: {
-            plagiarismBestMatchPercent: 0,
-            plagiarismCheckedAt: new Date(),
-            plagiarismPenaltyPercent: 0,
-            plagiarismAdjustedGrade: null,
-            plagiarismReport: emptyReport,
-          },
-        }
-      ).catch(() => {});
-      return res.status(200).json({
-        success: true,
-        ...(emptyReport || {}),
-      });
+    // Check if we should proceed with empty internal matches
+    const hasNoInternalMatches = !filtered.length;
+    const shouldContinueWithExternalOnly = isOnlySubmission || hasNoInternalMatches;
+
+    if (shouldContinueWithExternalOnly && !isOnlySubmission) {
+      // No other submissions to compare against (first assignment / single student)
+      console.log(`[PLAGIARISM] ${submissionId}: No student matches found`);
+    } else if (isOnlySubmission) {
+      console.log(`[PLAGIARISM] ${submissionId}: Only submission - external plagiarism detection only`);
     }
 
     // Aggregate by student_id: take best similarity per student.
@@ -2267,6 +2409,43 @@ exports.checkPlagiarism = async (req, res) => {
 
     const best = matches.length ? Math.max(...matches.map((m) => Number(m.matchPercent || 0) || 0)) : 0;
 
+    if (matches.length === 0 && isOnlySubmission) {
+      console.log(`[PLAGIARISM] ${submissionId}: External-only mode (no other submissions to compare)`);
+    } else if (matches.length > 0) {
+      console.log(`[PLAGIARISM] ${submissionId}: Found ${matches.length} student match(es), best=${best.toFixed(1)}%`);
+    }
+
+    // Detect AI-generated content (online resources / external plagiarism)
+    let aiScore = 0;
+    let isGptGenerated = false;
+    let aiAdditionalFeedback = "";
+    let aiDetectionError = null;
+
+    try {
+      console.log(`[PLAGIARISM] ${submissionId}: Checking for AI-generated content...`);
+      const { detectAIContent } = require("../utils/zerogpt-fallback");
+      const aiResult = await detectAIContent(queryTextForPlagiarism);
+      aiScore = aiResult.aiScore || 0;
+      isGptGenerated = aiResult.isGptGenerated || false;
+      aiAdditionalFeedback = aiResult.feedback || "";
+
+      if (aiResult.unavailable) {
+        aiDetectionError = aiResult.error;
+        console.warn(`[PLAGIARISM] ${submissionId}: ZeroGPT API unavailable: ${aiDetectionError}`);
+        console.warn(`[PLAGIARISM] ${submissionId}: AI detection disabled - returning 0%`);
+      } else if (aiScore > 0) {
+        const riskLevel = isGptGenerated ? "HIGH" : "MODERATE";
+        console.log(`[PLAGIARISM] ${submissionId}: AI Detection: ${aiScore}% (${riskLevel})${isGptGenerated ? " - GPT GENERATED" : ""}`);
+      } else {
+        console.log(`[PLAGIARISM] ${submissionId}: AI Detection: ${aiScore}% (No AI detected)`);
+      }
+    } catch (err) {
+      // ZeroGPT optional; continue with aiScore = 0
+      aiDetectionError = err.message;
+      console.error(`[PLAGIARISM] ${submissionId}: AI detection error: ${err.message}`);
+      console.error(`[PLAGIARISM] ${submissionId}: Continuing with internal plagiarism only`);
+    }
+
     // Add student names (best-effort) for UI clarity.
     let matchesWithNames = matches;
     try {
@@ -2289,6 +2468,7 @@ exports.checkPlagiarism = async (req, res) => {
     }
 
     // Compute penalty band now and persist (used on publish).
+    // Only penalize if there are actual matching student chunks (not just AI detection).
     const lerp = (a, b, t) => a + (b - a) * t;
     const clamp01 = (x) => Math.max(0, Math.min(1, x));
     const computePenaltyPercent = (pct) => {
@@ -2298,13 +2478,34 @@ exports.checkPlagiarism = async (req, res) => {
       if (p < 80) return Math.round(lerp(30, 50, clamp01((p - 60) / 20)));
       return 100;
     };
-    const penaltyPercent = computePenaltyPercent(best);
+    // Only apply student-match penalty if matches exist; AI detection is separate.
+    const penaltyPercent = matches.length > 0 ? computePenaltyPercent(best) : 0;
     // Compute adjusted grade immediately (teacher-only; NOT published to student until publish-ai).
     const maxGrade = Number(sub.maxGrade ?? 0) || 0;
     const baseGrade = Math.max(0, Math.min(maxGrade || 999999, Number(sub.aiGradingSuggestion ?? sub.grade ?? 0) || 0));
     let adjusted = baseGrade;
-    if (best >= 80) adjusted = Math.min(1, maxGrade || 1);
-    else if (penaltyPercent > 0) adjusted = Math.max(0, baseGrade - baseGrade * (penaltyPercent / 100));
+    if (matches.length > 0) {
+      if (best >= 80) adjusted = Math.min(1, maxGrade || 1);
+      else if (penaltyPercent > 0) adjusted = Math.max(0, baseGrade - baseGrade * (penaltyPercent / 100));
+    }
+
+    // Band based on student match; separate AI detection result.
+    const band = matches.length === 0
+      ? "0-30"
+      : best < 30 ? "0-30"
+      : best < 60 ? "30-60"
+      : best < 80 ? "60-80" : "80-100";
+
+    // Log final results
+    // Calculate overall plagiarism score: (internal × 0.6) + (external × 0.4)
+    const INTERNAL_WEIGHT = 0.6;
+    const EXTERNAL_WEIGHT = 0.4;
+    const overallScore = Math.round(best * INTERNAL_WEIGHT + aiScore * EXTERNAL_WEIGHT);
+    const riskLevel = overallScore >= 60 ? "high" : overallScore >= 30 ? "medium" : "low";
+
+    console.log(
+      `[PLAGIARISM] ${submissionId}: COMPLETE - Internal=${best.toFixed(1)}%, External=${aiScore}%, Overall=${overallScore}%, Risk=${riskLevel}, Penalty=${penaltyPercent}%${aiDetectionError ? ` (AI Error: ${aiDetectionError})` : ""}`
+    );
 
     await Submission.updateOne(
       { _id: sub._id },
@@ -2314,27 +2515,34 @@ exports.checkPlagiarism = async (req, res) => {
           plagiarismCheckedAt: new Date(),
           plagiarismPenaltyPercent: penaltyPercent,
           plagiarismAdjustedGrade: adjusted,
+          plagiarismAiScore: aiScore,
+          plagiarismIsGptGenerated: isGptGenerated,
           // Update teacher-visible overall score instantly
           aiGradingSuggestion: adjusted,
           plagiarismReport: {
             submissionId: String(sub._id),
             assessmentId,
+            internalScore: best,
             bestMatchPercent: best,
+            aiScore,
+            overallScore,
+            riskLevel,
             penalty: {
               penaltyPercent,
-              band:
-                best < 30 ? "0-30" :
-                best < 60 ? "30-60" :
-                best < 80 ? "60-80" : "80-100",
+              band,
               action:
-                best < 30 ? "No issue" :
-                best < 60 ? "Deduct 10–20% marks" :
-                best < 80 ? "Deduct 30–50% marks OR cap marks" :
+                penaltyPercent === 0 ? "No issue" :
+                penaltyPercent <= 20 ? "Deduct 10–20% marks" :
+                penaltyPercent <= 50 ? "Deduct 30–50% marks OR cap marks" :
                 "Give 0–1 marks OR manual review",
             },
             gradeAfterPlagiarism: adjusted,
             matches: matchesWithNames,
-            meta: { phase: "computed", topK: 50, normalized: "answers_only" },
+            isGptGenerated,
+            aiAdditionalFeedback,
+            detectionMode,
+            aiDetectionError: aiDetectionError || null,
+            meta: { phase: "computed", topK: 50, normalized: "answers_only", hasAiDetection: true, mode: detectionMode },
             computedAt: new Date().toISOString(),
             queryHash: require("crypto").createHash("sha256").update(String(queryTextForPlagiarism || ""), "utf8").digest("hex"),
           },
@@ -2345,25 +2553,37 @@ exports.checkPlagiarism = async (req, res) => {
       success: true,
       submissionId: String(sub._id),
       assessmentId,
+      internalScore: best,
       bestMatchPercent: best,
+      aiScore,
+      overallScore,
+      riskLevel,
       penalty: {
         penaltyPercent,
-        band:
-          best < 30 ? "0-30" :
-          best < 60 ? "30-60" :
-          best < 80 ? "60-80" : "80-100",
+        band,
         action:
-          best < 30 ? "No issue" :
-          best < 60 ? "Deduct 10–20% marks" :
-          best < 80 ? "Deduct 30–50% marks OR cap marks" :
+          penaltyPercent === 0 ? "No issue" :
+          penaltyPercent <= 20 ? "Deduct 10–20% marks" :
+          penaltyPercent <= 50 ? "Deduct 30–50% marks OR cap marks" :
           "Give 0–1 marks OR manual review",
       },
       gradeAfterPlagiarism: adjusted,
       matches: matchesWithNames,
+      isGptGenerated,
+      aiAdditionalFeedback,
+      detectionMode,
+      aiDetectionError: aiDetectionError || null,
     });
   } catch (error) {
-    console.error("❌ checkPlagiarism:", error);
-    return res.status(500).json({ success: false, error: "Failed plagiarism check", details: error.message });
+    const errorMsg = error?.message || String(error);
+    console.error(`[PLAGIARISM] ${submissionId || "unknown"}: FATAL ERROR - ${errorMsg}`);
+    console.error(`[PLAGIARISM] Stack trace:`, error?.stack);
+    return res.status(500).json({
+      success: false,
+      error: "Failed plagiarism check",
+      details: errorMsg,
+      timestamp: new Date().toISOString(),
+    });
   }
 };
 

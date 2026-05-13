@@ -2146,10 +2146,11 @@ exports.checkPlagiarism = async (req, res) => {
     if (!force && sub.plagiarismReport && typeof sub.plagiarismReport === "object") {
       const r = sub.plagiarismReport || {};
       // Ensure backward compatibility: compute missing fields from existing data
-      const internalScore = r.internalScore ?? r.bestMatchPercent ?? 0;
-      const aiScore = r.aiScore ?? 0;
-      const overallScore = r.overallScore ?? Math.round(internalScore * 0.6 + aiScore * 0.4);
-      const riskLevel = r.riskLevel ?? (overallScore >= 60 ? "high" : overallScore >= 30 ? "medium" : "low");
+      // Use || to override 0 values from older stored reports
+      const internalScore = (Number(r.internalScore) > 0 ? r.internalScore : null) || Number(r.bestMatchPercent) || 0;
+      const aiScore = Number(r.aiScore) || 0;
+      const overallScore = (Number(r.overallScore) > 0 ? r.overallScore : null) || Math.round(internalScore * 0.6 + aiScore * 0.4) || 0;
+      const riskLevel = r.riskLevel || (overallScore >= 60 ? "high" : overallScore >= 30 ? "medium" : "low");
 
       return res.status(200).json({
         success: true,
@@ -2162,7 +2163,7 @@ exports.checkPlagiarism = async (req, res) => {
         overallScore,
         riskLevel,
         matches: r.matches || [],
-        bestMatchPercent: r.bestMatchPercent ?? internalScore,
+        bestMatchPercent: r.bestMatchPercent || internalScore,
       });
     }
 
@@ -2190,8 +2191,10 @@ exports.checkPlagiarism = async (req, res) => {
           : computePenaltyPercent(best);
 
       const assessmentId = String(sub.assessmentId?._id || sub.assessmentId || "");
-      const aiScore = typeof sub.plagiarismAiScore === "number" ? sub.plagiarismAiScore : 0;
-      const overallScore = Math.round(best * 0.6 + aiScore * 0.4);
+      // For legacy records, reconstruct the scores using the stored best match
+      const aiScore = Math.max(0, Number(sub.plagiarismAiScore) || 0);
+      const internalScore = Math.max(0, Number(best) || 0);
+      const overallScore = Math.round(internalScore * 0.6 + aiScore * 0.4);
       const riskLevel = overallScore >= 60 ? "high" : overallScore >= 30 ? "medium" : "low";
 
       const legacyReport = {

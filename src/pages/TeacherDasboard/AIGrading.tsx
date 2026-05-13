@@ -972,7 +972,7 @@ const AIGrading = () => {
 
       // Phase 1: ensure we have extracted text loaded in UI
       const extracted = String(content?.extraction?.rawText || "").trim() || String(content?.submissionText || "").trim();
-      addLog(`Text extracted: ${extracted ? "✓ Found (' + extracted.length + ' chars)" : "✗ Not found"}`);
+      addLog(`Text extracted: ${extracted ? `✓ Found (${extracted.length} chars)` : "✗ Not found"}`);
       setPlagiarismPhase(extracted ? "phase2" : "phase1");
 
       addLog("Calculating internal plagiarism (student-to-student matching)...");

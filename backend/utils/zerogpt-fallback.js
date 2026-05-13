@@ -10,7 +10,7 @@
 const axios = require("axios");
 
 const ZEROGPT_API_URL = "https://api.zerogpt.com/api/detect/detectText";
-const ZEROGPT_API_KEY = process.env.ZEROGPT_API_KEY || "8272130c-6a68-4418-a109-e8dd13b86ea4";
+const ZEROGPT_API_KEY = process.env.ZEROGPT_API_KEY || null;
 const ZEROGPT_TIMEOUT = 15000; // 15 seconds max
 
 /**
@@ -25,6 +25,12 @@ async function detectAIContent(text) {
     if (!text || text.length < 50) {
       // Not enough text to analyze
       return { aiScore: 0, isGptGenerated: false, feedback: "", skipped: "Text too short" };
+    }
+
+    // If no API key configured, skip AI detection
+    if (!ZEROGPT_API_KEY) {
+      console.warn("[ZEROGPT] API key not configured - skipping AI detection");
+      return { aiScore: 0, isGptGenerated: false, feedback: "AI detection disabled", unavailable: true };
     }
 
     // Call ZeroGPT API

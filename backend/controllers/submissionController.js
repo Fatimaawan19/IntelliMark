@@ -2152,9 +2152,14 @@ exports.checkPlagiarism = async (req, res) => {
       const overallScore = (Number(r.overallScore) > 0 ? r.overallScore : null) || Math.round(internalScore * 0.6 + aiScore * 0.4) || 0;
       const riskLevel = r.riskLevel || (overallScore >= 60 ? "high" : overallScore >= 30 ? "medium" : "low");
 
+      console.log(
+        `[PLAGIARISM] ${submissionId} (CACHED): internal=${internalScore}%, external=${aiScore}%, overall=${overallScore}% [${riskLevel}]`
+      );
+
       return res.status(200).json({
         success: true,
         cached: true,
+        cachedAt: r.computedAt,
         detectionMode,
         ...(r || {}),
         // These MUST come after the spread to override any 0 values in stored report

@@ -12,7 +12,7 @@ const SUBMISSIONS_INDEX_DIR = path.join(RAG_DIR, "faiss_submissions_index");
 
 // ZeroGPT API — AI-generated content detection
 const ZEROGPT_API_URL = "https://api.zerogpt.com/api/detect/detectText";
-const ZEROGPT_API_KEY = process.env.ZEROGPT_API_KEY || "8272130c-6a68-4418-a109-e8dd13b86ea4";
+const ZEROGPT_API_KEY = process.env.ZEROGPT_API_KEY || null;
 
 // Score weighting: 60% internal student-match, 40% AI-generated
 const INTERNAL_WEIGHT = 0.6;
@@ -108,6 +108,19 @@ except Exception as e:
  * Returns { aiScore: 0-100, isGptGenerated: bool, additionalFeedback: string, sources: [], provider: string }
  */
 async function detectAIContent(text) {
+  // If no API key configured, skip AI detection
+  if (!ZEROGPT_API_KEY) {
+    console.warn("[PLAGIARISM] ZeroGPT API key not configured - skipping AI detection");
+    return {
+      aiScore: 0,
+      isGptGenerated: false,
+      additionalFeedback: "AI detection disabled (no API key configured)",
+      sources: [],
+      provider: 'zerogpt',
+      unavailable: true
+    };
+  }
+
   try {
     const { data } = await axios.post(
       ZEROGPT_API_URL,
@@ -129,9 +142,10 @@ async function detectAIContent(text) {
     return {
       aiScore: 0,
       isGptGenerated: false,
-      additionalFeedback: "",
+      additionalFeedback: `AI detection failed: ${err.message}`,
       sources: [],
-      provider: 'zerogpt'
+      provider: 'zerogpt',
+      unavailable: true
     };
   }
 }

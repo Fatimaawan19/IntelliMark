@@ -999,11 +999,12 @@ const AIGrading = () => {
 
       setPlagiarismPhase("phase3");
       addLog("Combining plagiarism scores (60% internal + 40% external)...");
-      addLog(`✓ Plagiarism check complete!`);
+      addLog(`✓ Plagiarism check ${data.cached ? "(CACHED - SAME SCORE)" : "complete"}!`);
       addLog(`  Internal: ${data.internalScore || 0}%`);
       addLog(`  External: ${data.aiScore || 0}%`);
       addLog(`  Overall: ${data.overallScore || 0}%`);
       if (data.riskLevel) addLog(`  Risk Level: ${data.riskLevel}`);
+      if (data.cached && data.cachedAt) addLog(`  Last Checked: ${new Date(data.cachedAt).toLocaleString()}`);
 
       setPlagiarismResult(data);
 
@@ -2009,7 +2010,14 @@ const AIGrading = () => {
                         <div className="space-y-3">
                           {/* Overall Plagiarism Score */}
                           <div className="rounded-lg border border-primary/20 bg-gradient-to-r from-blue-50 to-indigo-50 p-4">
-                            <div className="text-xs font-semibold text-muted-foreground mb-2">PLAGIARISM SUMMARY</div>
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="text-xs font-semibold text-muted-foreground">PLAGIARISM SUMMARY</div>
+                              {plagiarismResult?.cached && (
+                                <Badge variant="secondary" className="text-xs">
+                                  Cached Score
+                                </Badge>
+                              )}
+                            </div>
                             <div className="grid grid-cols-3 gap-3">
                               <div className="text-center">
                                 <div className="text-2xl font-bold text-blue-600">{Number(plagiarismResult?.internalScore || 0)}%</div>

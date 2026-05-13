@@ -776,7 +776,9 @@ const AIGrading = () => {
 
   const overall = useMemo(() => {
     const max = header?.maxGrade ?? report?.totals?.max ?? null;
-    const awarded = overrideGrade ?? header?.grade ?? header?.aiGradingSuggestion ?? report?.totals?.awarded ?? null;
+    // Use plagiarism-adjusted grade if available (shows score after plagiarism penalty)
+    // Otherwise fall back to AI suggestion or manual grade
+    const awarded = overrideGrade ?? header?.plagiarismAdjustedGrade ?? header?.grade ?? header?.aiGradingSuggestion ?? report?.totals?.awarded ?? null;
     const confidence = header?.aiConfidence ?? report?.confidence ?? null;
     const plagiarismAdjusted = header?.plagiarismAdjustedGrade ?? null;
     const fmt = (n: any) => {
@@ -1168,15 +1170,17 @@ const AIGrading = () => {
                   <CardContent className="space-y-4">
                     <div className="flex items-center justify-between p-4 bg-gradient-card rounded-lg">
                       <div>
-                        <p className="text-sm text-muted-foreground">Overall Score</p>
+                        <p className="text-sm text-muted-foreground">
+                          Overall Score{header?.assessmentType === "assignment" && overall.plagiarismAdjusted != null ? " (After Plagiarism)" : ""}
+                        </p>
                         <p className="text-3xl font-bold text-primary">
                           {overall.awarded != null && overall.max != null ? `${overall.fmt(overall.awarded)}/${overall.fmt(overall.max)}` : "—"}
                         </p>
-                        {header?.assessmentType === "assignment" && overall.plagiarismAdjusted != null ? (
+                        {header?.assessmentType === "assignment" && header?.aiGradingSuggestion != null && overall.plagiarismAdjusted != null ? (
                           <p className="mt-1 text-xs text-muted-foreground">
-                            Score after plagiarism detection:{" "}
+                            Original AI score:{" "}
                             <span className="font-semibold text-gray-900">
-                              {overall.fmt(overall.plagiarismAdjusted)}/{overall.fmt(overall.max)}
+                              {overall.fmt(header.aiGradingSuggestion)}/{overall.fmt(overall.max)}
                             </span>
                           </p>
                         ) : null}

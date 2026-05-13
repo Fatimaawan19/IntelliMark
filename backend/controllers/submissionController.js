@@ -2155,11 +2155,14 @@ exports.checkPlagiarism = async (req, res) => {
         success: true,
         cached: true,
         detectionMode,
+        ...(r || {}),
+        // These MUST come after the spread to override any 0 values in stored report
         internalScore,
         aiScore,
         overallScore,
         riskLevel,
-        ...(r || {})
+        matches: r.matches || [],
+        bestMatchPercent: r.bestMatchPercent ?? internalScore,
       });
     }
 
@@ -2234,11 +2237,12 @@ exports.checkPlagiarism = async (req, res) => {
       return res.status(200).json({
         success: true,
         cached: true,
+        ...(legacyReport || {}),
+        // These MUST come after the spread to ensure they override
         internalScore: best,
         aiScore,
         overallScore,
         riskLevel,
-        ...(legacyReport || {})
       });
     }
 
@@ -2321,11 +2325,12 @@ exports.checkPlagiarism = async (req, res) => {
       ).catch(() => {});
       return res.status(200).json({
         success: true,
+        ...(emptyReport || {}),
+        // These MUST come after the spread to ensure they are included
         internalScore: 0,
         aiScore: 0,
         overallScore: 0,
         riskLevel: "low",
-        ...(emptyReport || {}),
       });
     }
 

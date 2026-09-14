@@ -1,5 +1,6 @@
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 # InteliMark
 An Automatic quiz generation and marking system.
 =======
@@ -96,6 +97,8 @@ Network: http://192.168.18.142:8080/
 >>>>>>> 8f59fcd (Initial commit)
 =======
 # FYP_Project
+=======
+>>>>>>> 693b9996ae140606a5bf16ce30216f3399028d5a
 # InteliMark 🎓
 
 **An intelligent, AI-powered course management and assessment system for educators and students.**

@@ -1,10 +1,3 @@
-"""Chunking helpers for source code.
-
-We keep chunks relatively small and line-oriented so:
-- Retrieval can quote relevant code precisely
-- Metadata can include line ranges for explainability
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

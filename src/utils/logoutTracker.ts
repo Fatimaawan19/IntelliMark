@@ -8,8 +8,6 @@ import { doc, updateDoc } from 'firebase/firestore';
 export const trackUserLogout = async (userId: string) => {
   try {
     // Update user document with current time as lastActive and mark as offline
-    // The lastActive will show the actual logout time in the UI
-    // The isOnline flag determines the status (active/offline)
     const userRef = doc(db, 'users', userId);
     
     await updateDoc(userRef, {

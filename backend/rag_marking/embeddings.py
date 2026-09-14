@@ -1,17 +1,3 @@
-"""Embedding helpers for course materials.
-
-This file keeps the embedding logic separate from the vector database logic.
-That separation is important because it lets us swap the model later without
-touching how data is stored or retrieved.
-
-ENHANCED WITH:
-- PyTorch CPU-only setup to fix Windows CUDA/DLL crashes
-- Comprehensive debug logs before/after embedding
-- Error handling with fallback to lighter models
-- Memory-safe batch processing
-- Exit code 3221225477 fix (memory access violation)
-"""
-
 import logging
 import os
 import sys

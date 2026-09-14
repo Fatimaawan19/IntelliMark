@@ -1,0 +1,13 @@
+PP Assignment 02 - Sample Answer
+
+Q1: [Solution to first question would go here]
+- Clear explanation of approach
+- Step-by-step implementation
+- Expected output/results
+
+Q2: [Solution to second question would go here]
+- Analysis of the problem
+- Proper implementation
+- Test cases and verification
+
+This is a placeholder sample answer. Replace with actual expected solutions for better automarking results.

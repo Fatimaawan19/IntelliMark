@@ -62,8 +62,7 @@ function wordHit(fullText, word) {
   return fullText.includes(w);
 }
 
-// Curated, stable, free resources (no Google scraping).
-// Add more entries over time as you see real feedback topics.
+
 const CATALOG = [
   {
     id: "ml_reinforcement_learning",

@@ -1,4 +1,4 @@
-// TODO: Replace with actual backend API when database is connected
+
 
 interface ChatRequest {
   message: string;

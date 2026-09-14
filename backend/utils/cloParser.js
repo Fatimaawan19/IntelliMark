@@ -1,4 +1,4 @@
-// // cloParser.js - FIXED VERSION
+// // cloParser.js 
 // Utility for extracting and creating CLOs from syllabus text
 
 const CLO = require("../models/CLO");
@@ -174,22 +174,18 @@ async function parseCLOsFromText(text, course) {
       .replace(/[\s-:]+$/, '')     // Remove trailing punctuation
       .trim();
 
-    // ✅ FIX: Remove Bloom level text from the end of description (e.g. "Applying 2")
     const bloomRegex = new RegExp(`\\b(${bloomKeywords.join('|')})\\b.*$`, 'i');
     description = description.replace(bloomRegex, '').trim();
 
-    // Also remove trailing numbers if any look like levels (e.g. " 2", " 2,3")
     description = description.replace(/[\s,]+\d+[\s,]*$/, '').trim();
     description = description.replace(/[\s-]+$/, '').trim();
 
-    // DSF-specific cleanup: some DSF syllabi include extra sections (quizzes/books)
-    // that get appended into CLO-5. Trim those while leaving other courses unchanged.
     const isDSF =
       String(course?.courseTitle || '').toLowerCase().includes('data science fundamentals') ||
       String(course?.courseName || '').toLowerCase().includes('data science fundamentals') ||
       String(course?.courseCode || '').toUpperCase().startsWith('DS');
     if (isDSF && String(cloNumber) === '5') {
-      // Stop at common syllabus section headers accidentally captured
+      
       const stopTokens = [
         'Quizzes',
         'Assignments',
@@ -205,7 +201,7 @@ async function parseCLOsFromText(text, course) {
           description = description.slice(0, idx).trim();
         }
       }
-      // Prefer the first sentence if multiple got concatenated.
+      // Prefer the first sentence 
       const firstSentence = description.split('.').map(s => s.trim()).filter(Boolean)[0];
       if (firstSentence && firstSentence.length >= 5) {
         description = firstSentence.endsWith('.') ? firstSentence : `${firstSentence}.`;
@@ -299,5 +295,5 @@ module.exports = {
   parseCLOsFromText,
   getBloomLevelDetails,
   capitalizeBloomLevel,
-  ensureBloomLevelsExist // ✅ Export new function
+  ensureBloomLevelsExist //  Export new function
 };

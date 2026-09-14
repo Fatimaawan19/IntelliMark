@@ -38,7 +38,7 @@ interface ChatbotModalProps {
   userName?: string;
 }
 
-// Add this helper component for formatted messages with clickable links
+//  helper component for formatted messages with clickable links
 const FormattedMessage = ({ content }: { content: string }) => {
   // Convert markdown-style formatting to React elements
   const formatText = (text: string) => {

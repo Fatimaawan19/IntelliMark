@@ -1492,7 +1492,7 @@ const StudentDashboard = () => {
                 </CardContent>
               </Card>            </div>            {/* Main Content Grid - 70% Left + 30% Right - Matching Widths */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">              {/* Left Column - My Uploads */}
-              <Card className="bg-gradient-to-br from-white via-blue-50/30 to-primary/5 border border-primary/30 rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-300 flex flex-col overflow-hidden">
+              <Card className="bg-gradient-to-br from-white via-blue-50/30 to-primary/5 border border-primary/30 rounded-2xl shadow-xl hover:shadow-2xl transition-all duration-300 flex flex-col overflow-hidden h-[594px]">
                 <CardHeader className="border-b border-primary/20 pb-4 bg-gradient-to-r from-primary/10 to-transparent">
                   <div className="flex items-center gap-3">
                     <div className="p-3 bg-gradient-to-br from-primary/20 to-primary/10 rounded-xl">

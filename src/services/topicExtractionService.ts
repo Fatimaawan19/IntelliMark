@@ -1,8 +1,3 @@
-/**
- * Topic Extraction Service
- * Uses Grok LLM to extract main topic from document text
- */
-
 import axios from 'axios';
 
 const GROQ_API_KEY = import.meta.env.VITE_GROQ_API_KEY;

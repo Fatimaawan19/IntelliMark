@@ -1,11 +1,4 @@
-/**
- * ZeroGPT API Fallback Handler
- *
- * When ZeroGPT API fails:
- * 1. Gracefully returns 0% AI score (no AI detection)
- * 2. Allows plagiarism check to continue
- * 3. Logs the failure for debugging
- */
+
 
 const axios = require("axios");
 

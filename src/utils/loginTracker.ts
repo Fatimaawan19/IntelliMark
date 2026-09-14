@@ -1,16 +1,13 @@
 import { db } from '../firebase';
 import { doc, updateDoc, addDoc, collection, getDoc } from 'firebase/firestore';
 
-/**
- * Track user signup/first registration time
- * Call this function when a new user is created
- */
+// called when a suer is created
 export const trackUserSignup = async (userId: string, userEmail: string) => {
   try {
     const userRef = doc(db, 'users', userId);
     const userDoc = await getDoc(userRef);
     
-    // Only set signup time if it hasn't been set yet
+    // set only signup time
     if (userDoc.exists() && !userDoc.data().firstSignupTime) {
       await updateDoc(userRef, {
         firstSignupTime: new Date(),
@@ -39,7 +36,6 @@ const getIpAddress = async (): Promise<string> => {
 
 /**
  * Track user login activity
- * Call this function after successful authentication
  */
 export const trackUserLogin = async (userId: string, userEmail: string) => {
   try {

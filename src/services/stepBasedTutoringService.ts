@@ -1,8 +1,3 @@
-/**
- * Step-Based Tutoring Service
- * Manages the 3-step teaching sequence
- */
-
 import axios from 'axios';
 
 export interface StepBasedResponse {

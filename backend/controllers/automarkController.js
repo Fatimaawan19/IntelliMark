@@ -2,6 +2,7 @@ const AutomarkJob = require("../models/AutomarkJob");
 const Assessment = require("../models/Assessment");
 const Submission = require("../models/Submission");
 const SubmissionRaw = require("../models/SubmissionRaw");
+const mongoose = require("mongoose");
 const { ingestSubmission } = require("../utils/ingestionService");
 const { querySubmissionChunks } = require("../utils/submissionRetrievalService");
 const { queryAssessmentReferenceChunks } = require("../utils/assessmentReferenceRetrievalService");
@@ -410,6 +411,7 @@ exports.startAssessmentAutomarkBatch = async (req, res) => {
   try {
     const { assessmentId } = req.params;
     const teacherId = String(req.body?.teacherId || "").trim();
+    const submissionIds = Array.isArray(req.body?.submissionIds) ? req.body.submissionIds : null;
     if (!assessmentId || !teacherId) {
       return res.status(400).json({ success: false, error: "assessmentId and teacherId are required" });
     }
@@ -427,11 +429,24 @@ exports.startAssessmentAutomarkBatch = async (req, res) => {
       return res.status(400).json({ success: false, error: "Assessment has no questions" });
     }
 
-    const submissions = await Submission.find({
+    // If submissionIds provided, use them; otherwise default to all pending submissions
+    let query = {
       assessmentId: assessment._id,
       teacherId,
-      status: { $ne: "graded" },
-    })
+    };
+
+    if (submissionIds && submissionIds.length > 0) {
+      // Mark only selected submissions
+      const objectIds = submissionIds.map(id => {
+        try { return mongoose.Types.ObjectId(id); } catch { return id; }
+      });
+      query._id = { $in: objectIds };
+    } else {
+      // Default: only pending submissions
+      query.status = { $ne: "graded" };
+    }
+
+    const submissions = await Submission.find(query)
       .sort({ studentId: 1 })
       .lean();
 
@@ -497,6 +512,7 @@ exports.startAssessmentRemarkBatch = async (req, res) => {
   try {
     const { assessmentId } = req.params;
     const teacherId = String(req.body?.teacherId || "").trim();
+    const submissionIds = Array.isArray(req.body?.submissionIds) ? req.body.submissionIds : null;
     if (!assessmentId || !teacherId) {
       return res.status(400).json({ success: false, error: "assessmentId and teacherId are required" });
     }
@@ -514,11 +530,21 @@ exports.startAssessmentRemarkBatch = async (req, res) => {
       return res.status(400).json({ success: false, error: "Assessment has no questions" });
     }
 
-    // Re-mark ALL submissions (including already-graded ones) and overwrite AI analysis fields.
-    const submissions = await Submission.find({
+  
+    let query = {
       assessmentId: assessment._id,
       teacherId,
-    })
+    };
+
+    if (submissionIds && submissionIds.length > 0) {
+      // Re-mark only selected submissions
+      const objectIds = submissionIds.map(id => {
+        try { return mongoose.Types.ObjectId(id); } catch { return id; }
+      });
+      query._id = { $in: objectIds };
+    }
+
+    const submissions = await Submission.find(query)
       .sort({ studentId: 1 })
       .lean();
 

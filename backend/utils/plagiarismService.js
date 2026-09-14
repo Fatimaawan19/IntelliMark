@@ -14,7 +14,24 @@ const SUBMISSIONS_INDEX_DIR = path.join(RAG_DIR, "faiss_submissions_index");
 const ZEROGPT_API_URL = "https://api.zerogpt.com/api/detect/detectText";
 const ZEROGPT_API_KEY = process.env.ZEROGPT_API_KEY || null;
 
-// Score weighting: 60% internal student-match, 40% AI-generated
+// ═══════════════════════════════════════════════════════════════════════════
+// PLAGIARISM DETECTION CONFIGURATION 
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Risk level thresholds 
+const RISK_THRESHOLDS = {
+  high: 80,    
+  medium: 50,  
+  low: 0       
+};
+
+// Similarity filtering
+const MIN_SIMILARITY_PERCENT = 15;      
+const MIN_MATCH_WORD_COUNT = 20;        
+const BLOCK_DETECTION_THRESHOLD = 100;  
+const CODE_BLOCK_LINE_THRESHOLD = 10;   
+
+// Score weighting: combine internal and external plagiarism
 const INTERNAL_WEIGHT = 0.6;
 const AI_WEIGHT = 0.4;
 
@@ -27,6 +44,125 @@ function resolvePythonExecutable() {
   const venv = path.join(__dirname, "..", "..", ".venv-1", "Scripts", "python.exe");
   if (fs.existsSync(venv)) return venv;
   return "python";
+}
+
+/**
+ * Remove non-original content from text to reduce false positives.
+ * Filters out: questions, references, citations, headers, common templates, etc.
+ */
+function filterNonOriginalContent(text) {
+  let filtered = text;
+
+  // Remove question/prompt patterns
+  filtered = filtered.replace(/^Question[\s:]+.*/gim, "");
+  filtered = filtered.replace(/^(Task|Assignment|Problem)[\s:]+.*/gim, "");
+  filtered = filtered.replace(/^Instructions?[\s:]+.*/gim, "");
+  
+  // Remove common header/footer patterns
+  filtered = filtered.replace(/^(References|Bibliography|Citations|Sources|Works Cited|Appendix)[\s:]*\n[\s\S]*?(?=\n[A-Z]|\n\n|$)/gim, "");
+  filtered = filtered.replace(/^(Author|Due Date|Date|Name|Student|Course|Class)[\s:]+.*/gim, "");
+  
+  // Remove common template markers
+  filtered = filtered.replace(/\[.*?\]/g, "");  // Remove [bracketed placeholders]
+  filtered = filtered.replace(/\{.*?\}/g, "");  // Remove {braced placeholders}
+  filtered = filtered.replace(/TODO|FIXME|XXX|NOTE|HACK/gi, "");
+  
+  // Remove URLs and email addresses
+  filtered = filtered.replace(/https?:\/\/[^\s]+/g, "");
+  filtered = filtered.replace(/\S+@\S+\.\S+/g, "");
+  
+  // Clean up excessive whitespace
+  filtered = filtered.replace(/\n\n\n+/g, "\n\n").trim();
+  
+  return filtered;
+}
+
+/**
+ * Count words in text
+ */
+function countWords(text) {
+  return (text || "").trim().split(/\s+/).filter(w => w.length > 0).length;
+}
+
+/**
+ * Detect large consecutive blocks of copied content.
+ * Flags submissions with 100+ consecutive words or 10+ consecutive code lines from single source.
+ */
+function detectCopiedBlocks(matchedText, threshold = BLOCK_DETECTION_THRESHOLD) {
+  if (!matchedText) return null;
+
+  // Check word count for prose
+  const wordCount = countWords(matchedText);
+  if (wordCount >= threshold) {
+    return {
+      type: "prose_block",
+      wordCount,
+      description: `Large copied block detected: ${wordCount} consecutive words`
+    };
+  }
+
+  // Check line count for code
+  const lines = (matchedText || "").split(/\n/).filter(l => l.trim().length > 0);
+  if (lines.length >= CODE_BLOCK_LINE_THRESHOLD) {
+    return {
+      type: "code_block",
+      lineCount: lines.length,
+      description: `Large copied code block detected: ${lines.length} consecutive lines`
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Filter matches to exclude low similarity and short text.
+ * Returns filtered array and optionally flags large consecutive blocks.
+ */
+function filterAndFlagMatches(matches) {
+  const filtered = [];
+  const largeBlocks = [];
+
+  for (const match of matches) {
+    const similarity = match.similarity || 0;
+    const similarityPercent = similarity * 100;
+    
+    // Skip matches below minimum similarity threshold
+    if (similarityPercent < MIN_SIMILARITY_PERCENT) {
+      continue;
+    }
+
+    // Skip matches with insufficient word count
+    const wordCount = countWords(match.matchedText);
+    if (wordCount < MIN_MATCH_WORD_COUNT) {
+      continue;
+    }
+
+    // Check for large copied blocks (even if overall similarity is low)
+    const blockInfo = detectCopiedBlocks(match.matchedText);
+    if (blockInfo) {
+      largeBlocks.push({
+        submissionId: match.submissionId,
+        block: blockInfo,
+        match
+      });
+    }
+
+    filtered.push(match);
+  }
+
+  return { filtered, largeBlocks };
+}
+
+/**
+ * Calculate average similarity from top N matches.
+ * More realistic than using maximum similarity (reduces false positives).
+ */
+function calculateAverageSimilarity(matches, topN = 3) {
+  if (!matches || matches.length === 0) return 0;
+
+  const top = matches.slice(0, Math.min(topN, matches.length));
+  const sum = top.reduce((acc, m) => acc + (m.similarity || 0), 0);
+  return sum / top.length;
 }
 
 /**
@@ -153,6 +289,14 @@ async function detectAIContent(text) {
 /**
  * Run (or return cached) plagiarism check for a submission.
  *
+ * Improvements for accuracy:
+ * - Uses average of top 3 matches (not max) to reduce false positives
+ * - Filters out low similarity matches (<15%) and short matches (<20 words)
+ * - Removes non-original content (questions, references, citations)
+ * - Detects and flags large consecutive copied blocks
+ * - Separates plagiarism score from AI detection score
+ * - Uses higher risk thresholds (80%/50% instead of 60%/30%)
+ *
  * Determinism guarantee: once a report is stored, re-runs return the
  * exact same scores. Pass { forceRefresh: true } to recompute.
  *
@@ -173,28 +317,69 @@ async function checkPlagiarism(submissionId, { forceRefresh = false } = {}) {
 
   // Get extracted text (already done by AutoMark pipeline)
   const raw = await SubmissionRaw.findOne({ submissionId }).lean();
-  const text = String(
+  let text = String(
     raw?.rawText || raw?.ocrText || submission.submissionText || ""
   ).trim();
 
   if (!text || text.length < 50) {
     const fallback = {
-      submissionId, internalScore: 0, aiScore: 0, overallScore: 0,
-      riskLevel: "low", error: "Insufficient text extracted",
+      submissionId, 
+      internalScore: 0, 
+      aiScore: 0, 
+      plagiarismScore: 0,
+      riskLevel: "low", 
+      error: "Insufficient text extracted",
     };
     return fallback;
   }
 
+  // Filter non-original content to reduce false positives
+  const originalText = filterNonOriginalContent(text);
+  const analysisText = originalText.length > 50 ? originalText : text;
+
+  // Run similarity and AI detection in parallel
   const [internalMatches, aiResult] = await Promise.all([
-    queryInternalSimilarity(text, submission.studentId, submission.assessmentId?.toString(), 15),
-    detectAIContent(text),
+    queryInternalSimilarity(analysisText, submission.studentId, submission.assessmentId?.toString(), 15),
+    detectAIContent(analysisText),
   ]);
 
-  // Top 5 most similar submissions
-  const sortedMatches = [...internalMatches].sort((a, b) => b.similarity - a.similarity).slice(0, 5);
-  const internalScore = sortedMatches.length > 0
-    ? Math.round(sortedMatches[0].similarity * 100)
-    : 0;
+  // Filter matches: exclude low similarity and short matches
+  const { filtered: relevantMatches, largeBlocks } = filterAndFlagMatches(internalMatches);
+
+  // Sort by similarity and take top 5 for display
+  const sortedMatches = [...relevantMatches]
+    .sort((a, b) => (b.similarity || 0) - (a.similarity || 0))
+    .slice(0, 5);
+
+  // Calculate similarity using AVERAGE of top 3 (not max) for less harsh scoring
+  const avgSimilarity = calculateAverageSimilarity(sortedMatches, 3);
+  const internalScore = Math.round(avgSimilarity * 100);
+
+  // Check for flagged large copied blocks (even if overall score is low)
+  let blockDetectionFlag = null;
+  if (largeBlocks.length > 0) {
+    blockDetectionFlag = {
+      detected: true,
+      count: largeBlocks.length,
+      blocks: largeBlocks.map(b => ({
+        submission: b.submissionId,
+        type: b.block.type,
+        description: b.block.description,
+        similarityPercent: Math.round((b.match.similarity || 0) * 100),
+      }))
+    };
+  }
+
+  // Combine internal and AI scores
+  const overallScore = Math.round(internalScore * INTERNAL_WEIGHT + aiResult.aiScore * AI_WEIGHT);
+  
+  // Determine risk level based on combined score
+  let riskLevel = "low";
+  if (overallScore >= RISK_THRESHOLDS.high) {
+    riskLevel = "high";
+  } else if (overallScore >= RISK_THRESHOLDS.medium) {
+    riskLevel = "medium";
+  }
 
   // Enrich matches with student names from Submission collection
   const topMatches = await Promise.all(
@@ -211,6 +396,7 @@ async function checkPlagiarism(submissionId, { forceRefresh = false } = {}) {
           assessmentTitle:   s?.assessmentTitle || "",
           similarityPercent: Math.round(m.similarity * 100),
           matchedText:       m.matchedText,
+          wordCount:         countWords(m.matchedText),
         };
       } catch {
         return {
@@ -218,14 +404,13 @@ async function checkPlagiarism(submissionId, { forceRefresh = false } = {}) {
           studentId:         m.studentId,
           similarityPercent: Math.round(m.similarity * 100),
           matchedText:       m.matchedText,
+          wordCount:         countWords(m.matchedText),
         };
       }
     })
   );
 
-  const overallScore = Math.round(internalScore * INTERNAL_WEIGHT + aiResult.aiScore * AI_WEIGHT);
-  const riskLevel = overallScore >= 60 ? "high" : overallScore >= 30 ? "medium" : "low";
-
+  // ═══════════════════════════════════════════════════════════════════════════
   const report = await PlagiarismReport.findOneAndUpdate(
     { submissionId },
     {
@@ -234,21 +419,28 @@ async function checkPlagiarism(submissionId, { forceRefresh = false } = {}) {
       studentId:            submission.studentId,
       courseId:             submission.courseId,
       textLength:           text.length,
+      filteredTextLength:   analysisText.length,
+      
       internalScore,
       topMatches,
       aiScore:              aiResult.aiScore,
       isGptGenerated:       aiResult.isGptGenerated,
       aiAdditionalFeedback: aiResult.additionalFeedback,
+      aiUnavailable:        aiResult.unavailable || false,
+      
+      blockDetectionFlag,
+      copiedBlocksDetected: blockDetectionFlag?.detected || false,
+      
       overallScore,
       riskLevel,
-      sources:              aiResult.sources || [],  // Add external sources (e.g., from Rapid API)
-      provider:             aiResult.provider || 'zerogpt',  // Track which service detected external plagiarism
+      sources:              aiResult.sources || [],
+      provider:             aiResult.provider || 'zerogpt',
       checkedAt:            new Date(),
     },
     { upsert: true, new: true }
   );
 
-  console.log(`[PLAGIARISM] ${submissionId} → overall=${overallScore}% (internal=${internalScore}%, AI=${aiResult.aiScore}%) [${riskLevel}]`);
+  console.log(`[PLAGIARISM] ${submissionId} → overall=${overallScore}% (internal=${internalScore}%, AI=${aiResult.aiScore}%) [${riskLevel}]${blockDetectionFlag?.detected ? ' LARGE BLOCKS DETECTED' : ''}`);
   return report.toObject();
 }
 

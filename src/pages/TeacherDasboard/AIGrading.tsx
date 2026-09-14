@@ -356,19 +356,61 @@ const AIGrading = () => {
       ranges.push({ start: s, end: e, meta });
     };
 
+    // Fuzzy matcher for OCR text: tries to find a quote even with minor differences.
+    // 1. Direct case-insensitive match
+    // 2. Strip non-alphanumeric chars and try word-by-word match
+    const findFuzzyMatch = (quote: string): { start: number; end: number } | null => {
+      if (!quote || quote.length < 4) return null;
+      const lowerText = text.toLowerCase();
+      const lowerQuote = quote.toLowerCase();
+
+      // Direct match
+      const directIdx = lowerText.indexOf(lowerQuote);
+      if (directIdx !== -1) return { start: directIdx, end: directIdx + lowerQuote.length };
+
+      // Try matching by significant words (≥4 chars)
+      const words = lowerQuote.split(/\s+/).filter((w) => w.replace(/[^a-z0-9]/g, "").length >= 4);
+      if (words.length === 0) return null;
+
+      // Find first word that exists in text
+      let startIdx = -1;
+      let endIdx = -1;
+      for (const w of words) {
+        const clean = w.replace(/[^a-z0-9]/g, "");
+        if (clean.length < 4) continue;
+        const idx = lowerText.indexOf(clean);
+        if (idx !== -1) {
+          if (startIdx === -1) startIdx = idx;
+          endIdx = Math.max(endIdx, idx + clean.length);
+        }
+      }
+      if (startIdx === -1 || endIdx === -1 || endIdx <= startIdx) return null;
+      // Don't extend across paragraph breaks
+      const span = text.substring(startIdx, endIdx);
+      if (span.includes("\n\n")) return null;
+      // Don't make highlights too long
+      if (endIdx - startIdx > 200) return { start: startIdx, end: startIdx + 50 };
+      return { start: startIdx, end: endIdx };
+    };
+
     for (const m of Array.isArray(mistakes) ? mistakes : []) {
-      const quote = String(m?.text_span || m?.evidenceQuote || "").trim();
-      if (Number.isFinite(m?.start_index) && Number.isFinite(m?.end_index)) {
-        safeAdd(Number(m.start_index), Number(m.end_index), m);
-        continue;
-      }
-      if (Number.isFinite(m?.spanStart) && Number.isFinite(m?.spanEnd)) {
-        safeAdd(Number(m.spanStart), Number(m.spanEnd), m);
-        continue;
-      }
-      if (quote && quote.length >= 6) {
-        const idx = text.toLowerCase().indexOf(quote.toLowerCase());
-        if (idx !== -1) safeAdd(idx, idx + quote.length, m);
+      try {
+        const quote = String(m?.text_span || m?.evidenceQuote || "").trim();
+        if (Number.isFinite(m?.start_index) && Number.isFinite(m?.end_index)) {
+          safeAdd(Number(m.start_index), Number(m.end_index), m);
+          continue;
+        }
+        if (Number.isFinite(m?.spanStart) && Number.isFinite(m?.spanEnd)) {
+          safeAdd(Number(m.spanStart), Number(m.spanEnd), m);
+          continue;
+        }
+        if (quote && quote.length >= 4) {
+          const match = findFuzzyMatch(quote);
+          if (match) safeAdd(match.start, match.end, m);
+        }
+      } catch (err) {
+        // Skip this mistake on error
+        console.warn("[buildHighlightRanges] mistake skipped:", err);
       }
     }
     return ranges.sort((a, b) => a.start - b.start);
@@ -745,13 +787,13 @@ const AIGrading = () => {
     lastAutomarkStatusRef.current = s;
     if (!prev) return;
     if (prev !== s && s === "completed") {
-      toast({ title: "LLM Marking Successful", description: "AutoMark results are ready for review." });
+      toast({ title: "Marking Successful", description: "AutoMark results are ready for review." });
       setIsProcessing(false);
     }
     if (prev !== s && s === "failed") {
       const msg = String(submissionRaw?.automarkError || "").trim();
       toast({
-        title: "LLM Marking Failed",
+        title: "Marking Failed",
         description: msg || "AutoMark failed. Check extraction and try again.",
         variant: "destructive",
       });
@@ -1732,6 +1774,8 @@ const AIGrading = () => {
 
                                   // IMPORTANT: When showing per-question slices, character indices no longer match.
                                   // Drop indices and rely on text_span / quote matching for highlights.
+                                  // Also: for OCR text with low confidence, mistakes' text_span may not match exactly,
+                                  // so do fuzzy matching by stripping non-alphanumerics.
                                   const adjustedMistakes = (Array.isArray(mistakes) ? mistakes : []).map((x: any) => {
                                     const out = { ...(x || {}) };
                                     if (out?.start_index != null) out.start_index = null;
@@ -1740,7 +1784,16 @@ const AIGrading = () => {
                                     if (out?.spanEnd != null) out.spanEnd = null;
                                     return out;
                                   });
-                                  const ranges = buildHighlightRanges(bodyText, adjustedMistakes);
+                                  // CRITICAL FIX: Build ranges against the SAME text we will display,
+                                  // not the raw bodyText. Otherwise character indices are off and
+                                  // highlights miss or land on wrong characters.
+                                  let ranges: { start: number; end: number; meta: any }[] = [];
+                                  try {
+                                    ranges = buildHighlightRanges(displayText, adjustedMistakes);
+                                  } catch (err) {
+                                    console.warn("[AIGrading] highlight rendering failed:", err);
+                                    ranges = [];
+                                  }
                                   const garbled = isOcrExtraction && looksGarbled(displayText);
 
                                   return (
@@ -1784,9 +1837,16 @@ const AIGrading = () => {
                                   );
                                 };
 
+                                // Check if submission is image-based (only show extracted text, not image preview)
+                                const isImageBasedSubmission = Boolean(
+                                  content?.extraction?.extractor === "opencv-tesseract" ||
+                                  content?.extraction?.extractor === "tesseract-ocr"
+                                );
+
                                 return (
                                   <div className="space-y-3">
-                                    {isOcrExtraction && previewUrl ? (
+                                    {/* For image-based submissions, skip the iframe preview - just show the extracted text */}
+                                    {isOcrExtraction && previewUrl && !isImageBasedSubmission ? (
                                       <div className="rounded-xl border border-primary/10 bg-white shadow-sm overflow-hidden">
                                         <div className="flex items-center justify-between gap-2 px-4 py-2 border-b border-primary/10 bg-gradient-to-r from-white to-primary/5">
                                           <div className="text-xs font-semibold text-muted-foreground">Scanned document preview</div>
@@ -1808,28 +1868,32 @@ const AIGrading = () => {
 
                                     <div className="flex flex-wrap items-center justify-between gap-2">
                                       <div className="flex items-center gap-2">
-                                        {isOcrExtraction ? (
+                                        {isOcrExtraction || isImageBasedSubmission ? (
                                           <>
-                                            <Badge variant="outline" className="text-[11px]">
-                                              OCR text
+                                            <Badge variant="outline" className="text-[11px] border-emerald-500/40 text-emerald-700">
+                                              <CheckCircle className="h-3 w-3 mr-1" />
+                                              OCR Extracted Text
                                             </Badge>
                                             <span className="text-xs text-muted-foreground">May contain handwriting errors</span>
                                           </>
                                         ) : null}
                                       </div>
-                                      <div className="flex items-center gap-2">
-                                        <Button
-                                          type="button"
-                                          variant={showExtractedText ? "default" : "outline"}
-                                          className="h-7 px-2 text-xs"
-                                          onClick={() => setShowExtractedText((v) => !v)}
-                                        >
-                                          {showExtractedText ? "Hide extracted text" : "Show extracted text"}
-                                        </Button>
-                                      </div>
+                                      {!isImageBasedSubmission ? (
+                                        <div className="flex items-center gap-2">
+                                          <Button
+                                            type="button"
+                                            variant={showExtractedText ? "default" : "outline"}
+                                            className="h-7 px-2 text-xs"
+                                            onClick={() => setShowExtractedText((v) => !v)}
+                                          >
+                                            {showExtractedText ? "Hide extracted text" : "Show extracted text"}
+                                          </Button>
+                                        </div>
+                                      ) : null}
                                     </div>
 
-                                    {showExtractedText ? (
+                                    {/* For image-based submissions, always show extracted text (no hide button) */}
+                                    {showExtractedText || isImageBasedSubmission ? (
                                       <div className="space-y-5">
                                         {(textQs || [])
                                           .filter((q: any) => {

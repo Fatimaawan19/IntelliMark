@@ -1,5 +1,3 @@
-// TODO: Replace with actual backend API when database is connected
-
 export const mockUploadAPI = async (files: File[]): Promise<{ extractedContent: string; success: boolean }> => {
   // Simulate upload delay
   await new Promise(resolve => setTimeout(resolve, 1500));

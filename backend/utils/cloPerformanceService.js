@@ -5,18 +5,9 @@ const Assessment = require("../models/Assessment");
 const CLO = require("../models/CLO");
 const Question = require("../models/Question");
 const SubmissionRaw = require("../models/SubmissionRaw");
+const Course = require("../models/Course");
 
-/**
- * CLO Performance Calculator Service
- * 
- * Extracts real-time data from Submission and SubmissionRaw collections
- * and maintains StudentCLOPerformance records in sync.
- */
 
-/**
- * Extract numeric CLO number from various formats
- * "CLO-4" → 4, "4" → 4, 4 → 4
- */
 function extractCLONumber(cloValue) {
   if (!cloValue) return null;
   
@@ -247,11 +238,7 @@ async function updateCLOPerformanceForSubmission(submissionId) {
   }
 }
 
-/**
- * Bulk recalculate CLO performance for a student in a course
- * 
- * This is useful for correcting data or generating initial performance records
- * Fetches all graded submissions and rebuilds CLO performance from scratch
+/** Fetches all graded submissions and rebuilds CLO performance from scratch
  * 
  * @param {String} studentId - Student Firebase UID
  * @param {String} courseId - Course MongoDB ObjectId
@@ -348,13 +335,32 @@ async function populateCLOPerformanceForCourse(courseId) {
  */
 async function getStudentCLOPerformance(studentId, courseId) {
   try {
-    const performance = await StudentCLOPerformance.find({
+    let performance = await StudentCLOPerformance.find({
       studentId,
       courseId
     })
       .populate("cloId")
       .sort({ cloNumber: 1, assessmentType: 1 })
       .lean();
+
+    if (performance.length === 0) {
+      const submissionsCount = await Submission.countDocuments({
+        studentId,
+        courseId,
+        status: "graded"
+      });
+      if (submissionsCount > 0) {
+        console.log(`[Self-Healing] Recalculating CLO performance for student ${studentId} in course ${courseId}`);
+        await recalculateCLOPerformanceForStudentCourse(studentId, courseId);
+        performance = await StudentCLOPerformance.find({
+          studentId,
+          courseId
+        })
+          .populate("cloId")
+          .sort({ cloNumber: 1, assessmentType: 1 })
+          .lean();
+      }
+    }
 
     return performance;
 
@@ -374,7 +380,7 @@ async function getStudentCLOPerformance(studentId, courseId) {
  */
 async function getStudentCLOPerformanceByType(studentId, courseId, assessmentType) {
   try {
-    const performance = await StudentCLOPerformance.find({
+    let performance = await StudentCLOPerformance.find({
       studentId,
       courseId,
       assessmentType
@@ -382,6 +388,26 @@ async function getStudentCLOPerformanceByType(studentId, courseId, assessmentTyp
       .populate("cloId")
       .sort({ cloNumber: 1 })
       .lean();
+
+    if (performance.length === 0) {
+      const submissionsCount = await Submission.countDocuments({
+        studentId,
+        courseId,
+        status: "graded"
+      });
+      if (submissionsCount > 0) {
+        console.log(`[Self-Healing] Recalculating CLO performance by type for student ${studentId} in course ${courseId}`);
+        await recalculateCLOPerformanceForStudentCourse(studentId, courseId);
+        performance = await StudentCLOPerformance.find({
+          studentId,
+          courseId,
+          assessmentType
+        })
+          .populate("cloId")
+          .sort({ cloNumber: 1 })
+          .lean();
+      }
+    }
 
     return performance;
 
@@ -395,7 +421,7 @@ async function getStudentCLOPerformanceByType(studentId, courseId, assessmentTyp
  * Get CLO performance analytics for a course (all students)
  * 
  * @param {String} courseId - Course MongoDB ObjectId
- * @param {String} assessmentType - Optional: filter by 'quiz' or 'assignment'
+ * @param {String} assessmentType -  filter by 'quiz' or 'assignment'
  * @returns {Promise<Array>} Aggregated performance data
  */
 async function getCourseClOPerformanceAnalytics(courseId, assessmentType = null) {

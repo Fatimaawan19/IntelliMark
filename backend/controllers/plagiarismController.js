@@ -5,7 +5,7 @@ const Submission = require("../models/Submission");
 
 /**
  * POST /api/plagiarism/check/:submissionId
- * Run plagiarism check (or return cached). Query ?refresh=true to force rerun.
+ * Run plagiarism check 
  */
 exports.checkSubmission = async (req, res) => {
   try {
@@ -54,7 +54,7 @@ exports.getAssessmentReports = async (req, res) => {
 
 /**
  * GET /api/plagiarism/student/:studentId
- * All reports for a student (student-facing, their own submissions).
+ * All reports for a student 
  */
 exports.getStudentReports = async (req, res) => {
   try {
@@ -67,8 +67,7 @@ exports.getStudentReports = async (req, res) => {
 
 /**
  * GET /api/plagiarism/score-breakdown/:submissionId
- * Get consistent score breakdown with transparent penalty application.
- * Requires plagiarism report to exist.
+ * Get consistent score breakdown with penalitys from plagiarism report.
  */
 exports.getScoreBreakdown = async (req, res) => {
   try {
@@ -98,8 +97,9 @@ exports.getScoreBreakdown = async (req, res) => {
 
 /**
  * POST /api/plagiarism/check-assessment/:assessmentId
- * Batch-check all submissions for an assessment (background, non-blocking).
+ * Batch-check all submissions for an assessment 
  */
+ 
 exports.checkAssessmentBatch = async (req, res) => {
   try {
     const { assessmentId } = req.params;

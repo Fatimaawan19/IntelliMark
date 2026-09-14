@@ -1,14 +1,3 @@
-"""Ingest student submissions (code/text) from MongoDB into a dedicated FAISS index.
-
-Why separate index?
-- Avoid mixing reference course materials with student answers
-- Retrieval can be scoped to a specific submission/assessment/course
-
-Usage:
-  python ingest_submissions_to_faiss.py --submission-id <mongoObjectId>
-  python ingest_submissions_to_faiss.py --assessment-id <mongoObjectId> --limit 50
-"""
-
 from __future__ import annotations
 
 import argparse

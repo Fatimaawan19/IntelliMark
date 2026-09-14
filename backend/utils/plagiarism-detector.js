@@ -1,17 +1,4 @@
-/**
- * Unified Plagiarism Detection Service
- *
- * Intelligently uses multiple plagiarism detection services:
- * 1. Primary: Rapid API (online source detection)
- * 2. Secondary: ZeroGPT (AI-generated content detection)
- * 3. Fallback: Safe defaults (graceful degradation)
- *
- * This service provides:
- * - Automatic fallback between services
- * - Rate limit handling
- * - Error recovery
- * - Logging for monitoring
- */
+
 
 const axios = require("axios");
 

@@ -4,16 +4,6 @@ const os = require("os");
 const { spawn } = require("child_process");
 const sharp = require("sharp");
 
-/**
- * OCR image files using local Tesseract and produce:
- * - merged PDF (OCR'd per-page PDFs merged)
- * - concatenated extracted text
- *
- * Requires: Tesseract installed locally.
- * Optional env:
- * - TESSERACT_PATH: full path to tesseract.exe
- * - TESSERACT_LANG: e.g. "eng"
- */
 
 function ensureDir(p) {
   if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
@@ -21,10 +11,6 @@ function ensureDir(p) {
 
 function runTesseractToPdfAndText({ imagePath, outBasePath, lang, psm = "6" }) {
   const tesseractBin = String(process.env.TESSERACT_PATH || "tesseract");
-  // Improve OCR quality on scanned/handwritten-ish pages:
-  // - OEM 1: LSTM engine
-  // - PSM 6: assume a uniform block of text
-  // - preserve_interword_spaces: reduce word-joining artifacts
   const args = [
     imagePath,
     outBasePath,
@@ -139,12 +125,45 @@ function normalizeOcrText(raw) {
   const startsLower = (t) => /^[a-z(]/.test(String(t || "").trim());
   const isBullet = (t) => /^(\-|\*|\u2022|\d+\.)\s+/.test(String(t || "").trim());
 
+  // Filter out noise lines (mostly punctuation, single chars, or garbage from borders)
+  const isNoiseLine = (t) => {
+    const trimmed = String(t || "").trim();
+    if (!trimmed) return false; // keep blank lines for paragraph breaks
+
+    // Count letters vs non-letters (excluding spaces)
+    const letters = (trimmed.match(/[a-zA-Z]/g) || []).length;
+    const nonSpaceChars = trimmed.replace(/\s/g, "").length;
+
+    if (nonSpaceChars === 0) return false;
+
+    // Line is noise if:
+    // - Less than 30% letters AND has more than 5 chars (likely border/line artifacts)
+    // - OR contains mostly single-char "words" separated by spaces
+    if (nonSpaceChars > 5 && letters / nonSpaceChars < 0.3) return true;
+
+    // Mostly punctuation/symbols
+    const symbols = (trimmed.match(/[^a-zA-Z0-9\s]/g) || []).length;
+    if (nonSpaceChars > 5 && symbols / nonSpaceChars > 0.5) return true;
+
+    // Lines that are mostly fragmented short words (typical of OCR border noise)
+    const words = trimmed.split(/\s+/).filter(Boolean);
+    if (words.length > 5) {
+      const shortFragments = words.filter((w) => w.length <= 2 && !/^[a-zA-Z]$/.test(w)).length;
+      if (shortFragments / words.length > 0.5) return true;
+    }
+
+    return false;
+  };
+
   for (let i = 0; i < lines.length; i++) {
     const cur = String(lines[i] || "").trimEnd();
     if (!cur.trim()) {
       out.push("");
       continue;
     }
+
+    // Skip noisy lines
+    if (isNoiseLine(cur)) continue;
 
     // De-hyphenate common OCR line breaks: "vari-\nable" -> "variable"
     if (cur.trim().endsWith("-") && i + 1 < lines.length) {
@@ -156,6 +175,14 @@ function normalizeOcrText(raw) {
       }
     }
 
+    // Clean up the line: remove non-printable chars and excessive whitespace
+    let cleaned = cur
+      .replace(/[^\x20-\x7E\n]/g, " ") // Replace non-printable ASCII with space
+      .replace(/\s+/g, " ") // Collapse multiple spaces
+      .trim();
+
+    if (!cleaned) continue;
+
     // If OCR produced one-word-per-line, reflow into a sentence-ish paragraph.
     const prev = out.length ? String(out[out.length - 1] || "") : "";
     if (
@@ -164,14 +191,14 @@ function normalizeOcrText(raw) {
       !endsSentence(prev) &&
       !isBullet(prev) &&
       isShort(prev) &&
-      isShort(cur) &&
-      (startsLower(cur) || /^[A-Z]/.test(cur.trim()))
+      isShort(cleaned) &&
+      (startsLower(cleaned) || /^[A-Z]/.test(cleaned.trim()))
     ) {
-      out[out.length - 1] = `${prev.trimEnd()} ${cur.trimStart()}`;
+      out[out.length - 1] = `${prev.trimEnd()} ${cleaned.trimStart()}`;
       continue;
     }
 
-    out.push(cur);
+    out.push(cleaned);
   }
 
   // Clean excessive blank lines
@@ -223,40 +250,78 @@ async function ocrImagesToMergedPdf({ imagePaths, outputDir, outputFileName, onP
       }
       const outBase = path.join(tmpDir, `page-${i + 1}`);
       const prePath = path.join(tmpDir, `pre-${i + 1}.png`);
-      let ocrInputPath = imgPath;
+
+      // Try preprocessing but keep the original as fallback
+      let preprocessedPath = null;
       try {
-        ocrInputPath = await preprocessForOcr(imgPath, prePath);
+        preprocessedPath = await preprocessForOcr(imgPath, prePath);
       } catch {
-        ocrInputPath = imgPath;
+        preprocessedPath = null;
       }
 
-      // Try a couple of PSM modes and pick the best based on TSV confidence.
-      // PSM 6: uniform block of text, PSM 4: single column of text, variable sizes.
-      const candidates = ["6", "4"];
+      // Try OCR on both raw and preprocessed images, multiple PSM modes
+      // PSM 6: uniform block of text (printed)
+      // PSM 4: single column of variable-sized text
+      // PSM 3: fully automatic page segmentation
+      // PSM 11: sparse text (good for handwriting)
+      const candidates = ["6", "4", "3", "11"];
+      const inputPaths = preprocessedPath ? [imgPath, preprocessedPath] : [imgPath];
+      const inputLabels = preprocessedPath ? ["raw", "preprocessed"] : ["raw"];
+
+      let bestText = "";
+      let bestTextLength = 0;
       let bestPsm = "6";
-      let bestScore = -1;
-      for (const psm of candidates) {
-        const probeBase = path.join(tmpDir, `probe-${i + 1}-psm${psm}`);
-        try {
-          await runTesseractToTextAndTsv({ imagePath: ocrInputPath, outBasePath: probeBase, lang, psm });
-          const tsvPath = `${probeBase}.tsv`;
-          const score = fs.existsSync(tsvPath) ? scoreTsvConfidence(fs.readFileSync(tsvPath, "utf8")) : -1;
-          if (score > bestScore) {
-            bestScore = score;
-            bestPsm = psm;
+      let bestInputPath = imgPath;
+
+      for (let pathIdx = 0; pathIdx < inputPaths.length; pathIdx++) {
+        const inputPath = inputPaths[pathIdx];
+        const inputLabel = inputLabels[pathIdx];
+
+        for (const psm of candidates) {
+          const probeBase = path.join(tmpDir, `probe-${i + 1}-${inputLabel}-psm${psm}`);
+          try {
+            await runTesseractToTextAndTsv({ imagePath: inputPath, outBasePath: probeBase, lang, psm });
+            const txtPath = `${probeBase}.txt`;
+            if (fs.existsSync(txtPath)) {
+              const text = fs.readFileSync(txtPath, "utf8").trim();
+              const cleanLength = text.replace(/\s+/g, "").length;
+              if (cleanLength > bestTextLength) {
+                bestTextLength = cleanLength;
+                bestText = text;
+                bestPsm = psm;
+                bestInputPath = inputPath;
+              }
+            }
+          } catch {
+            // ignore probe failures
           }
-        } catch {
-          // ignore probe failures; fall back to defaults
         }
       }
 
-      await runTesseractToPdfAndText({ imagePath: ocrInputPath, outBasePath: outBase, lang, psm: bestPsm });
+      // Run final OCR with the best mode found, producing both PDF and text
+      try {
+        await runTesseractToPdfAndText({ imagePath: bestInputPath, outBasePath: outBase, lang, psm: bestPsm });
+      } catch (err) {
+        console.warn(`[OCR] Final pass failed for ${imgPath}: ${err.message}`);
+      }
 
       const pdfPath = `${outBase}.pdf`;
       const txtPath = `${outBase}.txt`;
 
       if (fs.existsSync(pdfPath)) pdfs.push(pdfPath);
-      if (fs.existsSync(txtPath)) texts.push(normalizeOcrText(fs.readFileSync(txtPath, "utf8")));
+
+      // Use the best text we found, even if final pass produced something else
+      if (fs.existsSync(txtPath)) {
+        const finalText = fs.readFileSync(txtPath, "utf8");
+        const finalCleanLength = finalText.replace(/\s+/g, "").length;
+        if (finalCleanLength >= bestTextLength) {
+          texts.push(normalizeOcrText(finalText));
+        } else {
+          texts.push(normalizeOcrText(bestText));
+        }
+      } else if (bestText) {
+        texts.push(normalizeOcrText(bestText));
+      }
     }
 
     if (pdfs.length === 0) throw new Error("Tesseract did not produce any PDF output");

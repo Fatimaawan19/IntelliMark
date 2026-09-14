@@ -1,8 +1,3 @@
-/**
- * Topic Classification Service
- * Identifies broad topics and suggests subtopics
- */
-
 export interface TopicInfo {
   isBroadTopic: boolean;
   topic: string;

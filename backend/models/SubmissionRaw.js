@@ -76,7 +76,12 @@ const submissionRawSchema = new mongoose.Schema(
     // OCR artifacts generated at submit time (optional; separate from extraction rawText)
     ocrPdfFileUrl: { type: String, default: "" },
     ocrPdfFilename: { type: String, default: "" },
+    ocrPdfPath: { type: String, default: "" },
     ocrText: { type: String, default: "" },
+    ocrProcessedAt: { type: Date, default: null },
+    ocrConfidence: { type: Number, default: 0, min: 0, max: 100 },
+    ocrQuality: { type: String, enum: ["high", "medium", "low", ""], default: "" },
+    ocrNeedsManualReview: { type: Boolean, default: false },
 
     extractionError: { type: String, default: "" },
     extractedAt: { type: Date, default: null },

@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""
-Query chunks and ingestion status from MongoDB
-Reads from coursematerialraws collection where FAISS ingestion metadata is stored
-"""
+
 
 import os
 import sys

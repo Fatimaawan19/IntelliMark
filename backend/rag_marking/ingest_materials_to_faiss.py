@@ -1,22 +1,3 @@
-"""Ingest raw course materials from MongoDB into FAISS vector store.
-
-This script:
-1. Connects to MongoDB and reads CourseMaterialRaw documents
-2. Chunks the extracted text for each material
-3. Generates embeddings for each chunk
-4. Stores chunks + embeddings + metadata in FAISS for semantic search
-
-Vector Database: FAISS (local, fast, no API key needed)
-Embeddings: Sentence Transformers (PyTorch CPU-only on Windows)
-
-Usage:
-    python ingest_materials_to_faiss.py
-    # or with options:
-    python ingest_materials_to_faiss.py --course-id <mongoObjectId>
-
-No API keys required - everything runs locally!
-"""
-
 import argparse
 import hashlib
 import json

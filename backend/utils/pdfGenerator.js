@@ -252,24 +252,18 @@ function drawProfessionalHeader(doc, assessment, course) {
 // Draw Short Answer question - clean question paper only
 function drawShortAnswerQuestion(doc, question, index, startY) {
     const questionY = drawQuestionHeader(doc, question, index, startY);
-    // ✅ CRITICAL: Short answer questions show ONLY the question, NOT the answer
-    // Students must provide their own answer in the answer submission
-    // ✅ REMOVED: Answer space to keep clean question paper format
+
     return questionY + 8;
 }
 
 // Draw Long Answer question - clean question paper only
 function drawLongAnswerQuestion(doc, question, index, startY) {
     const questionY = drawQuestionHeader(doc, question, index, startY);
-    // ✅ CRITICAL: Long answer questions show ONLY the question, NOT the expected answer
-    // Students must provide their own detailed response in the answer submission
-    // ✅ REMOVED: Answer space to keep clean question paper format
+
     return questionY + 8;
 }
 
-// Draw MCQ with properly formatted options
-// ✅ IMPORTANT: Do NOT highlight, bold, or mark the correct answer
-// Students must NOT see which option is correct in the quiz
+
 function drawMCQQuestion(doc, question, index, startY) {
     const questionY = drawQuestionHeader(doc, question, index, startY);
     let currentY = questionY + 5;
@@ -278,14 +272,12 @@ function drawMCQQuestion(doc, question, index, startY) {
         return currentY;
     }
 
-    // Draw options with formatting - Times New Roman 12pt, black color
-    // ⚠️ CRITICAL: All options must be formatted identically - NO exceptions
+  
     question.options.forEach((option, optIdx) => {
         const letter = String.fromCharCode(97 + optIdx); // a, b, c, d, etc. (lowercase)
         const optionY = currentY;
 
-        // Option with letter and parenthesis: a) Option text
-        // ✅ SAFEGUARD: Using uniform formatting - NO highlighting based on option.isCorrect
+
         doc.fontSize(12)
             .font('Times-Roman')
             .fillColor('#000000')  // ✅ Always black - never highlight correct answer
@@ -297,28 +289,18 @@ function drawMCQQuestion(doc, question, index, startY) {
         currentY = doc.y + 6;
     });
 
-    // ✅ CRITICAL: No answer indicators (checkmarks, stars, colors) are added
-    // ✅ REMOVED: Student answer checkbox to keep clean question paper format
+
     return currentY + 8;
 }
 
-// Draw Fill-in-the-blank question
-// ✅ IMPORTANT: Do NOT show the correct answer to students
+
 function drawFillInTheBlanksQuestion(doc, question, index, startY) {
     const questionY = drawQuestionHeader(doc, question, index, startY);
     let currentY = questionY;
-
-    // ✅ CRITICAL: Fill-in-the-blank questions show ONLY the question with blanks
-    // The correct answer is NOT displayed to protect question integrity
-    // Students must fill in the blanks themselves
-    // ✅ REMOVED: Answer lines to keep clean question paper format
-
     return currentY + 8;
 }
 
-// Draw True/False question
-// ✅ IMPORTANT: Do NOT highlight or mark the correct answer
-// Students must NOT see which option is correct in the quiz
+
 function drawTrueFalseQuestion(doc, question, index, startY) {
     const questionY = drawQuestionHeader(doc, question, index, startY);
     let currentY = questionY + 5;
@@ -328,13 +310,11 @@ function drawTrueFalseQuestion(doc, question, index, startY) {
         { letter: 'b', text: 'False' }
     ];
 
-    // ✅ SAFEGUARD: All options formatted identically - NO marking of correct answer
+
     options.forEach((option) => {
-        // Option with letter and parenthesis: a) True  or  b) False
-        // ✅ Always using black text - never highlight correct answer
         doc.fontSize(12)
             .font('Times-Roman')
-            .fillColor('#000000')  // ✅ Uniform formatting regardless of correctness
+            .fillColor('#000000')  
             .text(`${option.letter}) ${option.text}`, MARGIN + 25, currentY, {
                 width: CONTENT_W - 50
             });
@@ -342,23 +322,17 @@ function drawTrueFalseQuestion(doc, question, index, startY) {
         currentY = doc.y + 6;
     });
 
-    // ✅ CRITICAL: No answer indicators are added
     return currentY + 8;
 }
 
-// Helper function: Draw question header (number, text, marks, bloom level)
-// ✅ CRITICAL: This function displays ONLY the question text and metadata
-// ⚠️ Do NOT display correctAnswer or any answer-related fields
 function drawQuestionHeader(doc, question, index, startY) {
-    // ✅ DEBUG: Log question object
+   
     if (!question.questionText) {
         console.warn(`⚠️ WARNING: Question ${index} has no questionText!`);
         console.warn(`   Question object keys: ${Object.keys(question).join(', ')}`);
         console.warn(`   Full question object:`, JSON.stringify(question, null, 2));
     }
     
-    // Question number with period: "1. Question text..."
-    // ✅ SAFEGUARD: Only showing question text - NOT the correctAnswer or isCorrect fields
     doc.fontSize(12)
         .font('Times-Bold')
         .fillColor('#000000')

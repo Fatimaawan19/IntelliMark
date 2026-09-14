@@ -1,22 +1,3 @@
-"""Ingest assessment reference artifacts into a dedicated FAISS index.
-
-This index is used by the auto-marking module as the "reference truth" store:
-- Sample answers (per quiz question)
-- Marking rubrics (per question)
-- CLO text (per question/CLO)
-
-We keep this index separate from:
-- Course materials word bank (faiss_index)
-- Student submissions (faiss_submissions_index)
-
-Usage examples:
-  # Ingest raw text rubric
-  python ingest_assessment_reference_to_faiss.py --assessment-id <id> --question-id Q1 --type rubric --text "..."
-
-  # Ingest a sample answer PDF
-  python ingest_assessment_reference_to_faiss.py --assessment-id <id> --question-id Q1 --type sample_answer --file "..\\uploads\\sample.pdf"
-"""
-
 from __future__ import annotations
 
 import argparse

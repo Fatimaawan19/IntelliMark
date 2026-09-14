@@ -6,12 +6,6 @@ const path = require("path");
 const multer = require("multer");
 const fs = require("fs");
 
-/**
- * NOTIFICATION ROUTES - Firebase Firestore Backend (with MongoDB for assessment creation)
- * Assessment creation notifications: MongoDB
- * Other notifications: Firebase Firestore
- * Notifications are stored in: firestore/notifications/{doc} or mongodb/notifications/{doc}
- */
 
 const router = express.Router();
 

@@ -1,10 +1,5 @@
 /**
  * Ingestion Service - Wrapper around Python RAG ingestion pipeline.
- * 
- * This service bridges Node.js and Python:
- * - Calls the Python script to ingest raw materials into FAISS
- * - Logs progress and errors
- * - Integrates with existing Node workflow
  */
 
 const { spawn } = require('child_process');
@@ -341,19 +336,7 @@ function ingestSubmission(submissionId, options = {}) {
   });
 }
 
-/**
- * Ingest assessment reference (sample answer / rubric / CLO) into dedicated FAISS index.
- *
- * options:
- * - assessmentId (required)
- * - type: 'sample_answer' | 'rubric' | 'clo' (required)
- * - questionId: optional (defaults to ALL in python script)
- * - text: optional (for rubric/clo)
- * - filePath: optional (pdf/docx/jpg/png)
- * - splitSampleAnswer: boolean (only for sample_answer)
- * - questionCount: number (split mode hint)
- * - title: optional
- */
+
 function ingestAssessmentReference(options = {}) {
   return new Promise((resolve, reject) => {
     const timestamp = new Date().toISOString();
@@ -497,8 +480,6 @@ async function ingestMaterialAfterUpload(materialId) {
   try {
     console.log(`[PHASE1-INFO] ${timestamp} Initiating FAISS ingestion for material: ${materialId}`);
 
-    // Python ingestion script currently filters CourseMaterialRaw by _id, not materialId.
-    // Resolve the corresponding raw doc first to avoid 0-processed ingestion runs.
     const rawDoc = await CourseMaterialRaw.findOne({ materialId }).select('_id materialId extractionStatus');
     if (!rawDoc) {
       throw new Error(`No CourseMaterialRaw found for materialId ${materialId}`);

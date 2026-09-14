@@ -1,16 +1,4 @@
 #!/usr/bin/env python3
-"""
-OpenCV image preprocessing for higher-quality OCR.
-Called by Node.js controller; reads JSON from stdin and writes JSON to stdout.
-
-Input  (stdin): {"image_paths": ["abs/path/img.png", ...], "output_dir": "abs/path/tmp"}
-Output (stdout): {"success": true, "preprocessed_paths": ["abs/path/opencv_pre_0_img.png", ...]}
-                 {"success": false, "error": "..."}
-
-Each image is preprocessed (grayscale → upscale → denoise → adaptive-threshold) to improve
-Tesseract accuracy on scanned/photographed student submissions.
-Falls back to the original image path for any file that fails to preprocess.
-"""
 import sys
 import json
 import os
@@ -27,14 +15,14 @@ def preprocess_image(image_path: str, output_path: str) -> bool:
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-        # Upscale small images – Tesseract works best at 300 DPI (≈2400 px on A4).
+        # Upscale small images 
         h, w = gray.shape
         if max(h, w) < 2000:
             scale = 2000.0 / max(h, w)
             gray = cv2.resize(gray, None, fx=scale, fy=scale,
                               interpolation=cv2.INTER_CUBIC)
 
-        # Non-local means denoising – better edge preservation than simple blur.
+        # Non-local means denoising ->  better edge preservation than simple blur.
         denoised = cv2.fastNlMeansDenoising(gray, None, 10, 7, 21)
 
         # Adaptive threshold handles uneven lighting common in phone-photographed submissions.

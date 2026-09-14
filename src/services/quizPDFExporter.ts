@@ -1,8 +1,3 @@
-/**
- * PDF Export Service
- * Generates PDF documents from quiz data
- */
-
 import { Quiz, QuizQuestion } from './quizGenerator';
 
 /**

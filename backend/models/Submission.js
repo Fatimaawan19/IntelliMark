@@ -237,6 +237,11 @@ const submissionSchema = new mongoose.Schema({
     default: null
   },
   
+  originalAiGrade: {
+    type: Number,
+    default: null
+  },
+  
   aiConfidence: {
     type: Number,
     min: 0,

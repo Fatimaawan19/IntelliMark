@@ -1,8 +1,3 @@
-/**
- * Assessment Scheduler - Automatically publishes assessments at scheduled time
- * Runs as a background job checking every minute for assessments to publish
- */
-
 const Assessment = require("../models/Assessment");
 const Course = require("../models/Course");
 const cron = require('node-cron');
@@ -111,7 +106,6 @@ function stopAssessmentScheduler() {
 
   console.log('⏹️  Stopping assessment scheduler...');
   isSchedulerRunning = false;
-  // Note: To properly stop cron, you need to keep reference to the task
 }
 
 module.exports = {

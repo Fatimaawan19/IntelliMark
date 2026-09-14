@@ -11,8 +11,7 @@ const SubmissionRaw = require("../models/SubmissionRaw");
 const ExtractionJob = require("../models/ExtractionJob");
 const { automarkOneSubmission, buildPerQuestionScoresFromReport, extractFirstJsonObject } = require("../utils/automarkLlmService");
 const { ocrImagesToMergedPdf } = require("../utils/ocrService");
-// Recommended notes links (curated matcher) — temporarily disabled.
-// const { recommendLearningResource } = require("../utils/resourceRecommendationService");
+
 
 async function _pushExtractionJobLog(jobId, message, level = "info") {
   await ExtractionJob.updateOne({ _id: jobId }, { $push: { logs: { ts: new Date(), level, message } } }).catch(() => {});
@@ -177,13 +176,8 @@ async function resolveStudentEmail(studentId) {
   return "";
 }
 
-/**
- * GET /api/submissions/:submissionId/performance?teacherId=...
- * Real-time performance stats for AI Grading right panel.
- *
- * - Average: average % among submissions for same assessment+course
- * - Rank: rank of this student's % among same assessment+course submissions
- * - Improvement: delta vs this student's previous submission in same course + same assessmentType
+/* Real-time performance stats for AI Grading right panel.
+   Rank: rank of this student's % among same assessment+course submissions
  */
 exports.getSubmissionPerformanceStats = async (req, res) => {
   try {
@@ -240,7 +234,7 @@ exports.getSubmissionPerformanceStats = async (req, res) => {
       if (idx >= 0) rank = idx + 1;
     }
 
-    // Improvement: compare vs previous submission of same student in same course and same assessmentType
+    // compare vs previous submission of same student in same course and same assessmentType
     const prev = await Submission.findOne({
       teacherId,
       courseId: sub.courseId,
@@ -323,7 +317,7 @@ exports.submitAssessment = async (req, res) => {
       });
     }
 
-    // Determine deadline (prefer submissionDeadline; else combine dueDate+dueTime; else dueDate)
+    // Determine deadline 
     let deadline = assessment.submissionDeadline || null;
     if (!deadline && assessment.dueDate && assessment.dueTime) {
       deadline = new Date(`${assessment.dueDate}T${assessment.dueTime}`);
@@ -517,9 +511,7 @@ exports.submitAssessment = async (req, res) => {
       console.warn("[SUBMISSION-RAW] ⚠️ Failed to create SubmissionRaw:", e?.message || e);
     }
 
-    // ==================== OCR (OPTIONAL AT SUBMIT) ====================
-    // Default behavior should be teacher-triggered digitization.
-    // Enable automatic OCR at submit time only if OCR_ON_SUBMIT=true.
+    // OCR (optional)
     if (String(process.env.OCR_ON_SUBMIT || "").toLowerCase() === "true") {
       try {
       const imageFiles = submissionFiles.filter((f) => {
@@ -620,11 +612,7 @@ exports.submitAssessment = async (req, res) => {
       }
     });
 
-    // IMPORTANT: Do NOT auto-extract / ingest student submissions on upload.
-    // Extraction/FAISS ingestion should happen only when the teacher clicks the Extract button
-    // (see extractionController.startAssessmentExtractBatch).
-    //
-    // We only mark statuses as pending here so the UI can show "Not extracted yet".
+    
     const subId = String(submission._id);
     await Submission.findByIdAndUpdate(subId, {
       $set: {
@@ -700,11 +688,10 @@ exports.getStudentSubmissions = async (req, res) => {
       .sort({ submittedAt: -1 })
       .lean();
 
-    // IMPORTANT: Student should only see grade/feedback once teacher publishes it.
+    // Student can only see grade and feedback once teacher publishes it.
     const sanitized = (submissions || []).map((s) => {
       const gradePublished = Boolean(s?.gradePublished);
       if (gradePublished) {
-        // Strip any persisted recommendedResource so UI won't show stale links while feature is disabled.
         const { recommendedResource: _rr, ...rest } = s || {};
         return rest;
       }
@@ -753,8 +740,7 @@ exports.publishStudentReport = async (req, res) => {
       return res.status(400).json({ success: false, error: "Report can be sent after grading." });
     }
 
-    // Build and persist a snapshot so student sees EXACT same report teacher sent.
-    // (Teacher report is generated client-side; this snapshot freezes the payload.)
+   
     let raw = null;
     try {
       raw = await SubmissionRaw.findOne({ submissionId: submission._id })
@@ -992,6 +978,7 @@ exports.gradeSubmission = async (req, res) => {
       submission.plagiarismAdjustedGrade = adjusted;
       // Teacher UI uses aiGradingSuggestion as "current score"; keep it aligned after override.
       submission.aiGradingSuggestion = adjusted;
+      submission.originalAiGrade = baseGrade;
 
       if (submission.plagiarismReport && typeof submission.plagiarismReport === "object") {
         submission.plagiarismReport = {
@@ -1012,21 +999,33 @@ exports.gradeSubmission = async (req, res) => {
 
     console.log(`✅ Submission ${submissionId} graded: ${grade}/${submission.maxGrade}`);
 
-    // Update CLO-wise performance (async, non-blocking)
-    setImmediate(async () => {
+    // Update CLO-wise performance (async, non-blocking, with retry)
+    Promise.resolve().then(async () => {
       try {
         const cloPerformanceService = require("../utils/cloPerformanceService");
         const updatedCLOs = await cloPerformanceService.updateCLOPerformanceForSubmission(submissionId);
         if (updatedCLOs.length > 0) {
           console.log(`✅ Updated CLO performance for ${updatedCLOs.length} CLOs: ${updatedCLOs.map(c => `CLO${c.cloNumber}`).join(', ')}`);
+        } else {
+          console.warn(`⚠️ No CLO performance updates for submission ${submissionId} - may indicate missing CLO links or questions`);
         }
       } catch (error) {
-        console.warn('⚠️ Failed to update CLO performance:', error.message);
+        console.error('❌ Failed to update CLO performance:', error.message);
+        // Retry once after delay
+        setTimeout(async () => {
+          try {
+            const cloPerformanceService = require("../utils/cloPerformanceService");
+            await cloPerformanceService.updateCLOPerformanceForSubmission(submissionId);
+            console.log(`✅ CLO performance update succeeded on retry for ${submissionId}`);
+          } catch (retryError) {
+            console.error(`❌ Retry failed for CLO performance update: ${retryError.message}`);
+          }
+        }, 3000);
       }
-    });
+    }).catch(err => console.error('Unhandled error in CLO performance update:', err));
 
     // Send notification to student (async)
-    setImmediate(async () => {
+    Promise.resolve().then(async () => {
       try {
         const { notifySubmissionGraded } = require("../utils/notificationService");
         const assessment = await Assessment.findById(submission.assessmentId);
@@ -1034,7 +1033,7 @@ exports.gradeSubmission = async (req, res) => {
       } catch (error) {
         console.warn('⚠️ Failed to send grading notification:', error.message);
       }
-    });
+    }).catch(err => console.error('Unhandled error in notification:', err));
 
     res.json({
       success: true,
@@ -1054,13 +1053,7 @@ exports.gradeSubmission = async (req, res) => {
   }
 };
 
-/**
- * Update submission marks/feedback and sync CLO performance
- * PATCH /api/submissions/:submissionId/update-marks
- * 
- * Allows teacher to edit grades/feedback after initial grading
- * Automatically syncs CLO performance data
- */
+
 exports.updateSubmissionMarks = async (req, res) => {
   try {
     const { submissionId } = req.params;
@@ -1102,8 +1095,8 @@ exports.updateSubmissionMarks = async (req, res) => {
 
     console.log(`✅ Updated submission ${submissionId}: grade=${updates.grade}, feedback=${updates.feedback ? 'provided' : 'unchanged'}`);
 
-    // Sync CLO performance (async)
-    setImmediate(async () => {
+    // Sync CLO performance (async, with retry)
+    Promise.resolve().then(async () => {
       try {
         const cloPerformanceService = require("../utils/cloPerformanceService");
         const updatedCLOs = await cloPerformanceService.updateCLOPerformanceForSubmission(submissionId);
@@ -1111,9 +1104,19 @@ exports.updateSubmissionMarks = async (req, res) => {
           console.log(`✅ Re-synced CLO performance for ${updatedCLOs.length} CLOs after mark update`);
         }
       } catch (error) {
-        console.warn('⚠️ Failed to sync CLO performance:', error.message);
+        console.error('❌ Failed to sync CLO performance:', error.message);
+        // Retry once after delay
+        setTimeout(async () => {
+          try {
+            const cloPerformanceService = require("../utils/cloPerformanceService");
+            await cloPerformanceService.updateCLOPerformanceForSubmission(submissionId);
+            console.log(`✅ CLO performance sync succeeded on retry for ${submissionId}`);
+          } catch (retryError) {
+            console.error(`❌ Retry failed for CLO performance sync: ${retryError.message}`);
+          }
+        }, 3000);
       }
-    });
+    }).catch(err => console.error('Unhandled error in CLO sync:', err));
 
     res.json({
       success: true,
@@ -1236,8 +1239,8 @@ exports.publishAiReport = async (req, res) => {
     // If teacher already overrode grade/feedback, never overwrite on publish.
     const isManual = Boolean(submission.manualOverride);
     const gradeToSave = isManual
-      ? Number(submission.grade ?? 0) || 0
-      : Number(submission.aiGradingSuggestion ?? reportObj?.totals?.awarded ?? submission.grade ?? 0) || 0;
+      ? Number(submission.originalAiGrade ?? submission.grade ?? 0) || 0
+      : Number(submission.originalAiGrade ?? submission.aiGradingSuggestion ?? reportObj?.totals?.awarded ?? submission.grade ?? 0) || 0;
 
     let raw = null;
     try {
@@ -1289,6 +1292,9 @@ exports.publishAiReport = async (req, res) => {
     submission.plagiarismPenaltyPercent = pol.penaltyPercent;
     submission.plagiarismAdjustedGrade = finalGrade;
     if (pol.needsReview) submission.needsTeacherReview = true;
+
+    // Store original AI grade (before plagiarism penalty) to prevent double-penalty on re-check
+    submission.originalAiGrade = baseGrade;
 
     submission.grade = finalGrade;
     submission.feedback = feedbackToSave;
@@ -1482,10 +1488,8 @@ exports.getTeacherPerformance = async (req, res) => {
 };
 
 /**
- * Get all submissions for a teacher (from MongoDB submission collection)
+ * Get all submissions for a teacher from MongoDB submission collection
  * GET /api/submissions/teacher/:teacherId
- *
- * Returns flattened "upload-like" entries (one per file) for easy UI rendering.
  */
 exports.getTeacherSubmissions = async (req, res) => {
   try {
@@ -1652,7 +1656,7 @@ exports.getTeacherSubmissionsGrouped = async (req, res) => {
     // Pull automark status from SubmissionRaw in one query (so UI can show badges).
     const subIds = submissions.map((s) => s?._id).filter(Boolean);
     const rawDocs = await SubmissionRaw.find({ submissionId: { $in: subIds } })
-      .select("submissionId automarkStatus automarkError totalAwardedMarks automarkedAt")
+      .select("submissionId automarkStatus automarkError totalAwardedMarks automarkedAt ocrText ocrProcessedAt extractor")
       .lean()
       .catch(() => []);
     const rawBySubmissionId = new Map(
@@ -1750,6 +1754,17 @@ exports.getTeacherSubmissionsGrouped = async (req, res) => {
       const isPending = !isGraded;
       const isLate = Boolean(sub.isLate);
 
+      // Check for image-based files (JPG, JPEG, PNG)
+      const subFiles = Array.isArray(sub.submissionFiles) ? sub.submissionFiles : [];
+      const hasImageFiles = subFiles.some((f) => {
+        const mime = String(f?.mimeType || "").toLowerCase();
+        return mime.startsWith("image/") && (mime.includes("jpeg") || mime.includes("jpg") || mime.includes("png"));
+      });
+
+      // Check OCR status from SubmissionRaw
+      const rawDoc = rawBySubmissionId.get(String(sub._id));
+      const ocrCompleted = Boolean(rawDoc?.ocrText && rawDoc.ocrText.trim().length > 0);
+
       assessmentNode.submissions.push({
         submissionId: String(sub._id),
         studentId: sub.studentId,
@@ -1760,8 +1775,11 @@ exports.getTeacherSubmissionsGrouped = async (req, res) => {
         uploadedFilesCount: sub.uploadedFilesCount ?? (Array.isArray(sub.submissionFiles) ? sub.submissionFiles.length : 0),
         grade: sub.grade ?? null,
         maxGrade: sub.maxGrade ?? null,
-        automarkStatus: rawBySubmissionId.get(String(sub._id))?.automarkStatus || "missing",
-        automarkError: rawBySubmissionId.get(String(sub._id))?.automarkError || "",
+        automarkStatus: rawDoc?.automarkStatus || "missing",
+        automarkError: rawDoc?.automarkError || "",
+        hasImageFiles,
+        ocrCompleted,
+        ocrProcessedAt: rawDoc?.ocrProcessedAt ? new Date(rawDoc.ocrProcessedAt).toISOString() : null,
       });
 
       assessmentNode.stats.total += 1;
@@ -2495,7 +2513,13 @@ exports.checkPlagiarism = async (req, res) => {
     const penaltyPercent = matches.length > 0 ? computePenaltyPercent(best) : 0;
     // Compute adjusted grade immediately (teacher-only; NOT published to student until publish-ai).
     const maxGrade = Number(sub.maxGrade ?? 0) || 0;
-    const baseGrade = Math.max(0, Math.min(maxGrade || 999999, Number(sub.aiGradingSuggestion ?? sub.grade ?? 0) || 0));
+    const baseGrade = Math.max(
+      0,
+      Math.min(
+        maxGrade || 999999,
+        Number(sub.originalAiGrade ?? sub.aiGradingSuggestion ?? sub.grade ?? 0) || 0
+      )
+    );
     let adjusted = baseGrade;
     if (matches.length > 0) {
       if (best >= 80) adjusted = Math.min(1, maxGrade || 1);
@@ -2520,6 +2544,8 @@ exports.checkPlagiarism = async (req, res) => {
       `[PLAGIARISM] ${submissionId}: COMPLETE - Internal=${best.toFixed(1)}%, External=${aiScore}%, Overall=${overallScore}%, Risk=${riskLevel}, Penalty=${penaltyPercent}%${aiDetectionError ? ` (AI Error: ${aiDetectionError})` : ""}`
     );
 
+    const originalAiGradeToSave = typeof sub.originalAiGrade === "number" ? sub.originalAiGrade : baseGrade;
+
     await Submission.updateOne(
       { _id: sub._id },
       {
@@ -2530,6 +2556,7 @@ exports.checkPlagiarism = async (req, res) => {
           plagiarismAdjustedGrade: adjusted,
           plagiarismAiScore: aiScore,
           plagiarismIsGptGenerated: isGptGenerated,
+          originalAiGrade: originalAiGradeToSave,
           // Update teacher-visible overall score instantly
           aiGradingSuggestion: adjusted,
           plagiarismReport: {

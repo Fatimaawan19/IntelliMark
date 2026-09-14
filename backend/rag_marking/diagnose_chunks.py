@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-Diagnostic script to find chunks and vectors in MongoDB
-"""
-
 import os
 import sys
 from pymongo import MongoClient

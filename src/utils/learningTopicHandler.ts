@@ -19,7 +19,7 @@ const nonLearningPatternsWithoutDoc = /\b(my name|the time|today|date|who are yo
 const documentQuestionPatterns = /\b(question \d+|q\d+|problem \d+|exercise \d+|explain.*(?:question|problem|exercise)|solve.*(?:question|problem)|what.*(?:question|problem))/i;
 
 /**
- * Detect if user is asking a learning/tutoring question
+ * Detect if user is asking a tutoring question
  * Returns true only if it's clearly a learning intent
  * @param userMessage - The user's message
  * @param hasDocumentContext - Whether a document has been uploaded
@@ -180,4 +180,17 @@ export const defaultVideos: { [key: string]: { title: string; url: string }[] } 
     { title: 'Scrimba - React Course', url: 'https://www.youtube.com/watch?v=I6nnxkVt3nU' },
     { title: 'Traversy Media - React', url: 'https://www.youtube.com/watch?v=A71aqufiNtQ' }
   ],
+};
+
+
+export const buildYouTubeQuery = (topic: string, courseCode?: string, severity?: 'high' | 'medium' | 'low'): string => {
+  const coursePart = courseCode ? `${courseCode} ` : "";
+  const level =
+    severity === 'high' ? 'advanced' :
+    severity === 'low' ? 'introductory' :
+    'intermediate';
+
+  // Ask for lectures/tutorials and transcripts to improve relevance
+  const q = `${coursePart}${topic} ${level} lecture tutorial explained transcript`;
+  return q.replace(/\s+/g, ' ').trim();
 };

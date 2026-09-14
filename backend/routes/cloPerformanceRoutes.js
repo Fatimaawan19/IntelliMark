@@ -2,11 +2,7 @@ const express = require("express");
 const router = express.Router();
 const cloPerformanceController = require("../controllers/cloPerformanceController");
 
-/**
- * CLO Performance Routes
- * 
- * Endpoints for retrieving and managing student CLO-wise performance metrics
- */
+
 
 // Get CLO performance for a student in a course
 router.get("/student/:studentId/course/:courseId", cloPerformanceController.getStudentCLOPerformance);

@@ -133,7 +133,7 @@ exports.createAssessment = async (req, res) => {
     console.log(`   Question Template: "${questionTemplate}"`);
     console.log(`   Question Count: ${questionCount}`);
 
-    // ✅ NORMALIZE question template - map short forms to full names
+  
     const TEMPLATE_MAP = {
       'short': 'short-answer',
       'short-answer': 'short-answer',
@@ -182,7 +182,7 @@ exports.createAssessment = async (req, res) => {
       assessmentStatus = 'draft';
     }
 
-    // Create assessment with metadata only (no questions/PDFs yet)
+    // Create assessment with metadata only 
     const assessment = await Assessment.create({
       type,
       courseId,
@@ -205,7 +205,7 @@ exports.createAssessment = async (req, res) => {
       allowLateSubmission: allowLateSubmission || false,
       latePenalty: latePenalty || 0,
       weightage: weightage || 100,
-      questionTemplate: normalizedTemplate  // ✅ Use normalized template
+      questionTemplate: normalizedTemplate  
     });
 
     console.log(`✅ Assessment created: ${assessment._id} (${type})`);
@@ -219,7 +219,7 @@ exports.createAssessment = async (req, res) => {
       console.log(`   ⏳ Will auto-publish at scheduled time`);
     }
 
-    // ✅ IF STATUS IS DRAFT: Save only, do NOT generate PDFs or notifications
+    // IF STATUS IS DRAFT: Save only
     if (assessmentStatus === 'draft') {
       console.log('📝 Assessment saved as DRAFT - no publication');
       return res.status(201).json({
@@ -239,7 +239,7 @@ exports.createAssessment = async (req, res) => {
       });
     }
 
-    // ✅ IF PUBLISHING: Generate questions, PDFs, and send notifications
+    //  IF PUBLISHING: Generate questions, PDFs, and send notifications
     if (assessmentStatus === 'published') {
       console.log('🚀 Publishing assessment immediately...');
       try {

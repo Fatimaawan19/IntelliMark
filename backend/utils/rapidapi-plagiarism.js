@@ -1,12 +1,3 @@
-/**
- * Rapid API Plagiarism Detection Service
- *
- * Detects plagiarism and external content usage via Rapid API
- * Replaces ZeroGPT with more reliable plagiarism detection
- *
- * API: Plagiarism Checker And Auto Citation Generator
- * Endpoint: https://plagiarism-checker-and-auto-citation-generator.p.rapidapi.com/plagiarism
- */
 
 const axios = require("axios");
 

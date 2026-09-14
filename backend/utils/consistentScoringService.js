@@ -1,12 +1,4 @@
-/**
- * CONSISTENT SCORING SERVICE
- *
- * Implements transparent, fair, and consistent plagiarism penalty scoring.
- * - Combines internal (60%) and external (40%) plagiarism scores
- * - Applies tiered penalty bands (NONE, LOW, MEDIUM, HIGH, EXTREME)
- * - Provides detailed transparency breakdown for students and teachers
- * - Ensures no contradictions (if plagiarism > 20%, topMatches must be shown)
- */
+
 
 const mongoose = require("mongoose");
 const Submission = require("../models/Submission");
@@ -101,8 +93,8 @@ async function calculateConsistentScore(submission) {
   try {
     console.log(`[SCORING] Calculating score for ${submissionId}`);
 
-    // Get AI grade
-    const aiScore = Number(submission.grade || 0);
+    // Get AI grade - use original AI grade if available, else use current grade
+    const aiScore = Number(submission.originalAiGrade || submission.grade || 0);
     const maxScore = Number(submission.maxGrade || 10);
 
     if (!aiScore || aiScore < 0) {

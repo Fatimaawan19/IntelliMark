@@ -1,9 +1,3 @@
-/**
- * Course Material Retrieval Service - Query course material chunks from FAISS.
- *
- * Uses the default FAISS index stored in backend/rag_marking/faiss_index (see faiss_vector_store.py).
- * Filters results by metadata.course_id.
- */
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");

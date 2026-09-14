@@ -1,17 +1,3 @@
-"""Initialize the Assessment Reference FAISS index.
-
-This creates (or loads) a dedicated FAISS index intended for:
-- Sample answers (per assessment question)
-- Marking rubrics
-- CLO text / mapping notes
-
-Why a separate index:
-- Keeps grading "reference truth" separate from course materials and student submissions.
-
-Usage:
-  python init_assessment_reference_index.py
-"""
-
 from __future__ import annotations
 
 import json

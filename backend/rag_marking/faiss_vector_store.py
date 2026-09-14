@@ -1,12 +1,3 @@
-"""LangChain FAISS Vector Store - Production-ready RAG pipeline.
-
-Single persistent FAISS index with deduplication support.
-- Uses LangChain's FAISS wrapper for clean API
-- Auto-loads/saves from disk
-- Prevents duplicate embeddings using content_hash
-- Production-ready error handling and logging
-"""
-
 import hashlib
 import logging
 from pathlib import Path

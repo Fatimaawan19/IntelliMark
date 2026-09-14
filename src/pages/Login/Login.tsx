@@ -97,7 +97,7 @@ export default function Login() {
   };
 
   // -------------------------
-  // POST LOGIN (after OTP verified)
+  // POST LOGIN after OTP verification
   // -------------------------
   const postLoginFlow = async (user: any, email: string, selectedRole: string) => {
     const usersRef = collection(db, "users");

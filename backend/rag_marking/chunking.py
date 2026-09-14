@@ -1,10 +1,3 @@
-"""Text chunking helpers.
-
-Chunking is the bridge between raw extracted text and vector search.
-We split long documents into smaller pieces so the embedding model and the
-vector database can work with them effectively.
-"""
-
 from typing import List
 
 

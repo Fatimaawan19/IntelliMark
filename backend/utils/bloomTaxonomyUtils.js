@@ -1,26 +1,3 @@
-/**
- * Bloom Taxonomy Utilities
- * 
- * MASTER REFERENCE IMPLEMENTATION:
- * 
- * Bloom levels are stored as immutable, universal reference data:
- * - Only 6 Bloom levels exist (Remembering → Creating)
- * - Stored in `bloomtaxonomies` collection (initialized once via seedBloomLevels.js)
- * - NEVER modified after seeding (immutable master reference)
- * 
- * CLOs reference Bloom levels:
- * - Each CLO has a `bloomLevelId` field (ObjectId pointing to bloomtaxonomies)
- * - When new courses are uploaded, only new CLO records are created
- * - CLOs reference existing Bloom levels without modifying them
- * - Bloom levels are NEVER created, updated, or deleted during normal operations
- * 
- * This ensures:
- * ✅ Bloom levels remain consistent across all courses
- * ✅ No duplicate levels when new courses are added
- * ✅ Referential integrity through ObjectId foreign keys
- * ✅ Clean separation: Bloom levels (master) vs CLOs (transactional)
- */
-
 const mongoose = require("mongoose");
 const BloomTaxonomy = require("../models/BloomTaxonomy");
 const CLO = require("../models/CLO");

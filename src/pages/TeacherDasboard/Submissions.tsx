@@ -33,6 +33,9 @@ type GroupedSubmission = {
   uploadedFilesCount: number;
   grade: number | null;
   maxGrade: number | null;
+  hasImageFiles?: boolean;
+  ocrCompleted?: boolean;
+  ocrProcessedAt?: string | null;
 };
 
 type GroupedAssessment = {
@@ -95,6 +98,9 @@ const Submissions = () => {
   const [markingDialogMeta, setMarkingDialogMeta] = useState<any>(null);
   const [markingDialogLoading, setMarkingDialogLoading] = useState(false);
   const [markingDialogAction, setMarkingDialogAction] = useState<"automark" | "remark">("automark");
+
+  const [selectedSubmissions, setSelectedSubmissions] = useState<Set<string>>(new Set());
+  const [allAssessmentSubmissions, setAllAssessmentSubmissions] = useState<any[]>([]);
 
   useEffect(() => {
     // Allow other screens (e.g., AI Grading) to deep-link into the existing AutoMark dialog.
@@ -168,7 +174,8 @@ const Submissions = () => {
   const startAndPollJob = async (
     startUrl: string,
     onCompleted?: () => void,
-    onFinally?: () => void
+    onFinally?: () => void,
+    bodyParams?: Record<string, any>
   ) => {
     setBatchOpen(true);
     setBatchLoading(true);
@@ -198,6 +205,7 @@ const Submissions = () => {
         body: JSON.stringify({
           teacherId,
           ...(startUrl.includes("/remark-batch") ? { skipReingest: true } : {}),
+          ...bodyParams,
         }),
       });
       const startData = await startRes.json().catch(() => ({}));
@@ -688,6 +696,86 @@ const Submissions = () => {
     }
   };
 
+  // Helper: Check if assessment has any image-based submissions
+  const hasImageSubmissions = (assessment: GroupedAssessment): boolean => {
+    return assessment.submissions.some((s) => (s.uploadedFilesCount ?? 0) > 0);
+  };
+
+  // Helper: Get OCR completion status for an assessment
+  // Returns: 'none' (no image submissions), 'partial' (some OCR'd), 'complete' (all OCR'd)
+  const getAssessmentOcrStatus = (assessment: GroupedAssessment): "none" | "partial" | "complete" => {
+    const imageSubs = assessment.submissions.filter((s) => s.hasImageFiles);
+    if (imageSubs.length === 0) return "none";
+    const ocrdCount = imageSubs.filter((s) => s.ocrCompleted).length;
+    if (ocrdCount === 0) return "none";
+    if (ocrdCount === imageSubs.length) return "complete";
+    return "partial";
+  };
+
+  // Track per-submission OCR loading state
+  const [ocrLoadingBySubmission, setOcrLoadingBySubmission] = useState<Record<string, boolean>>({});
+
+  // OCR a single submission's images
+  const runOcrOnSubmission = async (submissionId: string, studentName: string) => {
+    setOcrLoadingBySubmission((prev) => ({ ...prev, [submissionId]: true }));
+    try {
+      const response = await fetch(`http://localhost:5000/api/submissions/${submissionId}/ocr`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ teacherId }),
+      });
+
+      // Handle non-2xx responses with proper error parsing
+      const data = await response.json().catch(() => ({ success: false, error: "Invalid response from server" }));
+
+      if (!response.ok) {
+        toast({
+          title: "❌ OCR Failed",
+          description: data.error || `Server error (${response.status})`,
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (data.success) {
+        const textLen = Number(data.textLength || 0);
+        if (textLen === 0) {
+          toast({
+            title: "⚠️ OCR Completed with no text",
+            description: `No readable text could be extracted from ${studentName}'s images. The image may be too low quality or contain no text.`,
+            variant: "destructive",
+          });
+        } else {
+          toast({
+            title: "✅ OCR Completed",
+            description: `Extracted ${textLen} characters from ${data.pageCount || 1} image(s) for ${studentName}. Text is now ready for auto-marking.`,
+          });
+        }
+        // Refresh submission list to update OCR status badges
+        setTimeout(() => fetchTeacherGrouped(teacherId), 500);
+      } else {
+        toast({
+          title: "❌ OCR Failed",
+          description: data.error || "Could not process images",
+          variant: "destructive",
+        });
+      }
+    } catch (error: any) {
+      const errMsg = error?.message || "Network error - check backend connection";
+      toast({
+        title: "❌ OCR Error",
+        description: errMsg,
+        variant: "destructive",
+      });
+    } finally {
+      setOcrLoadingBySubmission((prev) => {
+        const next = { ...prev };
+        delete next[submissionId];
+        return next;
+      });
+    }
+  };
+
   const openDigitizeFlow = async (assessment: GroupedAssessment) => {
     try {
       const ungraded = assessment.submissions.filter((s) => String(s.status || "") !== "graded");
@@ -695,6 +783,17 @@ const Submissions = () => {
         toast({
           title: "No pending submissions",
           description: "There are no submissions to digitize for this assessment.",
+        });
+        return;
+      }
+
+      // Check if any ungraded submissions have files
+      const ungradedWithFiles = ungraded.filter((s) => (s.uploadedFilesCount ?? 0) > 0);
+      if (ungradedWithFiles.length === 0) {
+        toast({
+          title: "No image files found",
+          description: "None of the pending submissions have image files to process with OCR.",
+          variant: "destructive",
         });
         return;
       }
@@ -850,6 +949,25 @@ const Submissions = () => {
     }
   };
 
+  // Fetch all submissions for an assessment (both graded and pending)
+  const fetchAssessmentSubmissions = async (assessmentId: string) => {
+    try {
+      const response = await fetch(`http://localhost:5000/api/submissions/assessment/${encodeURIComponent(assessmentId)}`);
+      const data = await response.json().catch(() => ({ submissions: [] }));
+      const subs = Array.isArray(data?.submissions) ? data.submissions : [];
+      setAllAssessmentSubmissions(subs);
+      // Auto-select only pending ones
+      const pendingIds = subs
+        .filter((s: any) => String(s.status || "").toLowerCase() !== "graded")
+        .map((s: any) => String(s._id));
+      setSelectedSubmissions(new Set(pendingIds));
+    } catch (e) {
+      console.error("Failed to fetch submissions:", e);
+      setAllAssessmentSubmissions([]);
+      setSelectedSubmissions(new Set());
+    }
+  };
+
   // Opens the Extract + AutoMark dialog (requires sample answer already in Mongo).
   const openMarkingDialog = async (
     assessment: GroupedAssessment,
@@ -864,6 +982,8 @@ const Submissions = () => {
     try {
       const { meta } = await getSampleStatus(assessment.assessmentId);
       setMarkingDialogMeta(meta);
+      // Fetch submissions for selection
+      await fetchAssessmentSubmissions(assessment.assessmentId);
     } catch {
       setMarkingDialogMeta(null);
     } finally {
@@ -999,7 +1119,28 @@ const Submissions = () => {
                                           Total: {assessment.stats.total} • Graded: {assessment.stats.graded} • Pending: {assessment.stats.pending} • Late: {assessment.stats.late}
                               </div>
                                 </div>
-                                      <div className="flex items-center gap-2">
+                                      <div className="flex items-center gap-2 flex-wrap justify-end">
+                                        {/* OCR Badge - ONLY shows when assessment has image submissions AND all of them are OCR'd */}
+                                        {(() => {
+                                          // Must have at least one image-based submission
+                                          const imageSubs = assessment.submissions.filter((s) => s.hasImageFiles);
+                                          if (imageSubs.length === 0) return null;
+
+                                          // ALL image submissions must have OCR completed
+                                          const allOcrd = imageSubs.every((s) => s.ocrCompleted);
+                                          if (!allOcrd) return null;
+
+                                          return (
+                                            <Badge
+                                              variant="outline"
+                                              className="text-sm px-3 py-1 border-emerald-500/40 text-emerald-700 bg-emerald-50"
+                                              title={`OCR completed for ${imageSubs.length} image submission(s)`}
+                                            >
+                                              <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                                              OCR ✓
+                                            </Badge>
+                                          );
+                                        })()}
                                         {Number(assessment?.stats?.pending ?? 0) === 0 && Number(assessment?.stats?.graded ?? 0) > 0 ? (
                                           <Badge variant="success" className="text-sm px-3 py-1">
                                             AutoMarked
@@ -1018,15 +1159,6 @@ const Submissions = () => {
                                         Upload sample answer to extract CLO &amp; rubric, then run AutoMark per assessment.
                                       </div>
                                       <div className="flex gap-2 flex-wrap">
-                                        <Button
-                                          variant="secondary"
-                                          className="bg-primary/10 hover:bg-primary/15 text-primary h-11 text-base px-5"
-                                          onClick={() => openDigitizeFlow(assessment)}
-                                        >
-                                          <Scan className="h-4 w-4 mr-2" />
-                                          Digitize (OCR)
-                                        </Button>
-
                                         {/* Sample Answer button — turns green once uploaded */}
                                         {sampleStatusByAssessment[assessment.assessmentId] === "ready" ? (
                                           <Button
@@ -1099,15 +1231,15 @@ const Submissions = () => {
                                               {showAutomark ? (
                                                 am === "processing" ? (
                                                   <Badge variant="warning" className="text-xs px-2 py-0.5">
-                                                    LLM Processing
+                                                    Marking
                                                   </Badge>
                                                 ) : am === "completed" ? (
                                                   <Badge variant="success" className="text-xs px-2 py-0.5">
-                                                    LLM Completed
+                                                    Marked
                                                   </Badge>
                                                 ) : (
                                                   <Badge variant="destructive" className="text-xs px-2 py-0.5">
-                                                    LLM Failed
+                                                    Marking Failed
                                                   </Badge>
                                                 )
                                               ) : null}
@@ -1121,6 +1253,31 @@ const Submissions = () => {
                                             </div>
                                           </div>
                                           <div className="flex gap-2">
+                        {s.hasImageFiles ? (
+                          s.ocrCompleted ? (
+                            <Button
+                              variant="outline"
+                              className="border-emerald-500/40 text-emerald-600 hover:bg-emerald-50 h-11 text-base px-5"
+                              onClick={() => runOcrOnSubmission(s.submissionId, s.studentName)}
+                              disabled={Boolean(ocrLoadingBySubmission[s.submissionId])}
+                              title={`OCR completed${s.ocrProcessedAt ? ` on ${new Date(s.ocrProcessedAt).toLocaleString()}` : ""}. Click to re-run.`}
+                            >
+                              <CheckCircle className="h-4 w-4 mr-2" />
+                              {ocrLoadingBySubmission[s.submissionId] ? "Processing..." : "OCR ✓"}
+                            </Button>
+                          ) : (
+                            <Button
+                              variant="secondary"
+                              className="bg-amber-50 hover:bg-amber-100 text-amber-700 h-11 text-base px-5"
+                              onClick={() => runOcrOnSubmission(s.submissionId, s.studentName)}
+                              disabled={Boolean(ocrLoadingBySubmission[s.submissionId])}
+                              title="Extract text from image submissions using OCR"
+                            >
+                              <Scan className="h-4 w-4 mr-2" />
+                              {ocrLoadingBySubmission[s.submissionId] ? "Processing..." : "OCR"}
+                            </Button>
+                          )
+                        ) : null}
                         {String(s.status || "") === "graded" ? (
                           <Button
                             variant="outline"
@@ -1262,11 +1419,61 @@ const Submissions = () => {
                   )}
                 </div>
 
+                <div className="rounded-xl border border-primary/10 bg-muted/40 p-4 space-y-3">
+                  <div className="text-sm font-semibold text-gray-900 flex items-center justify-between">
+                    <span>Select Submissions to Mark</span>
+                    <span className="text-xs font-normal text-muted-foreground">
+                      {selectedSubmissions.size} of {allAssessmentSubmissions.length}
+                    </span>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto space-y-1 border border-primary/10 rounded-lg bg-white p-2">
+                    {allAssessmentSubmissions.length === 0 ? (
+                      <div className="text-xs text-muted-foreground py-2 px-2">No submissions found</div>
+                    ) : (
+                      allAssessmentSubmissions.map((sub: any) => (
+                        <label
+                          key={sub._id}
+                          className={`flex items-center gap-2 p-2 rounded border ${
+                            String(sub.status || "").toLowerCase() === "graded"
+                              ? "border-emerald-200 bg-emerald-50"
+                              : "border-rose-200 bg-rose-50"
+                          } cursor-pointer transition-colors`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedSubmissions.has(String(sub._id))}
+                            onChange={(e) => {
+                              const newSet = new Set(selectedSubmissions);
+                              if (e.target.checked) {
+                                newSet.add(String(sub._id));
+                              } else {
+                                newSet.delete(String(sub._id));
+                              }
+                              setSelectedSubmissions(newSet);
+                            }}
+                            className="w-4 h-4 cursor-pointer"
+                          />
+                          <div className="flex-1">
+                            <div className="text-sm font-medium text-gray-900">{sub.studentName}</div>
+                            <div className="text-xs text-muted-foreground">{sub.studentEmail || sub.studentId}</div>
+                          </div>
+                          <Badge
+                            variant={String(sub.status || "").toLowerCase() === "graded" ? "success" : "destructive"}
+                            className="text-xs"
+                          >
+                            {String(sub.status || "").toLowerCase() === "graded" ? "Marked" : "Pending"}
+                          </Badge>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                </div>
+
                 <div className="grid sm:grid-cols-2 gap-3">
                   <Button
                     variant="secondary"
                     className="bg-primary/10 hover:bg-primary/15 text-primary h-11 text-base"
-                    disabled={batchLoading || !markingDialogMeta?.automarkReady}
+                    disabled={batchLoading || !markingDialogMeta?.sampleAnswerStatus}
                     onClick={async () => {
                       if (!markingDialogTarget?.assessmentId) return;
                       await startAndPollJob(
@@ -1276,6 +1483,7 @@ const Submissions = () => {
                           fetchTeacherGrouped(teacherId);
                         },
                         async () => {
+                          // Keep dialog usable after failures; refresh sample/rubric/CLO readiness.
                           try {
                             const { meta } = await getSampleStatus(markingDialogTarget.assessmentId);
                             setMarkingDialogMeta(meta);
@@ -1290,34 +1498,34 @@ const Submissions = () => {
 
                   <Button
                     className="bg-gradient-primary text-primary-foreground h-11 text-base"
-                    disabled={batchLoading || !markingDialogMeta?.automarkReady}
+                    disabled={batchLoading || !markingDialogMeta?.automarkReady || selectedSubmissions.size === 0}
                     onClick={async () => {
                       if (!markingDialogTarget?.assessmentId) return;
                       await startAndPollJob(
-                        `http://localhost:5000/api/assessments/${encodeURIComponent(markingDialogTarget.assessmentId)}/${
-                          markingDialogAction === "remark" ? "remark-batch" : "automark-batch"
-                        }`,
+                        `http://localhost:5000/api/assessments/${encodeURIComponent(markingDialogTarget.assessmentId)}/${markingDialogAction === "remark" ? "remark-batch" : "automark-batch"}`,
                         () => {
                           toast({
                             title: markingDialogAction === "remark" ? "Re-AutoMark completed" : "AutoMark completed",
                             description:
                               markingDialogAction === "remark"
-                                ? "All submissions were re-graded."
-                                : "All pending submissions were auto-marked.",
+                                ? `All ${selectedSubmissions.size} selected submissions were re-graded.`
+                                : `${selectedSubmissions.size} submission(s) were auto-marked.`,
                           });
                           fetchTeacherGrouped(teacherId);
                         },
                         async () => {
+                          // After AutoMark completes or fails, re-fetch meta so the dialog stays accurate/enabled.
                           try {
                             const { meta } = await getSampleStatus(markingDialogTarget.assessmentId);
                             setMarkingDialogMeta(meta);
                           } catch {}
-                        }
+                        },
+                        { submissionIds: Array.from(selectedSubmissions) }
                       );
                     }}
                   >
                     <Brain className="h-4 w-4 mr-2" />
-                    {markingDialogAction === "remark" ? "Re-AutoMark" : "AutoMark"}
+                    {markingDialogAction === "remark" ? "Re-AutoMark" : "AutoMark"} ({selectedSubmissions.size})
                   </Button>
                 </div>
 
@@ -1394,7 +1602,7 @@ const Submissions = () => {
                       }
                     );
                   }}
-                  disabled={batchLoading || !Boolean(autoMarkMeta?.automarkReady)}
+                  disabled={batchLoading || !Boolean(autoMarkMeta?.sampleAnswerStatus)}
                 >
                   Extract Submissions
                 </Button>

@@ -5,7 +5,7 @@ import { getAuth } from "firebase/auth";
 import { getFirestore, collection, addDoc, doc, setDoc, getDoc, serverTimestamp, deleteDoc } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
-// 🔹 Your Firebase Config
+//  Firebase Config
 const firebaseConfig = {
   apiKey: "AIzaSyAvZ6RfqbNQ9c0tMQUhowz5R7MSlgQeKos",
   authDomain: "intellimark-4ceed.firebaseapp.com",
@@ -44,7 +44,7 @@ export async function initializeAssignmentHelpCollection() {
   try {
     console.log("🔄 Initializing Assignment Help Collection...");
 
-    // Create a sample document structure (will be deleted immediately)
+    // Create a sample document structure 
     const sampleHelpRequest = {
       assignmentId: "sample_assignment_1",
       assignmentTitle: "Sample Assignment",

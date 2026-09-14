@@ -1,13 +1,6 @@
 const { admin, firestore } = require("../config/firebase");
 
-/**
- * ============================================================
- * NOTIFICATION SERVICE - Firebase Firestore First
- * ============================================================
- * 
- * All notifications are stored in Firebase Firestore collection:
- * firestore -> notifications -> [all notification docs]
- * 
+/* 
  * Notification Types:
  * - 'assessment-created': When a new quiz/assignment is created
  * - 'assessment-updated': When an assessment is modified
@@ -20,32 +13,9 @@ const { admin, firestore } = require("../config/firebase");
  * - 'course-updated': When teacher updates course description
  * 
  * Recipients:
- * - Teachers (creator of assessment)
+ * - Teachers 
  * - Students (registered in the course)
- * - Admins (all system admins)
- * 
- * Each notification includes:
- * {
- *   type: string (notification type)
- *   recipientId: string (Firebase user ID)
- *   recipientRole: string ('teacher', 'student', 'admin')
- *   title: string (short title)
- *   message: string (detailed message)
- *   assessmentId: string (MongoDB assessment ID)
- *   assessmentTitle: string
- *   courseId: string (MongoDB course ID)
- *   courseCode: string
- *   courseName: string
- *   createdById: string (creator's Firebase ID)
- *   createdByName: string (creator's name)
- *   read: boolean (default: false)
- *   createdAt: timestamp (Firestore server timestamp)
- * }
- * ============================================================
- */
-
-/**
- * Create a reusable function to add notifications to Firebase
+ * - Admins 
  */
 async function addFirebaseNotification(recipientId, data) {
   try {
@@ -63,10 +33,7 @@ async function addFirebaseNotification(recipientId, data) {
   }
 }
 
-/**
- * Create a Firebase notification at a deterministic doc id.
- * If it already exists, it will NOT create a duplicate.
- */
+
 async function addFirebaseNotificationOnce(recipientId, deterministicId, data) {
   if (!deterministicId) {
     return addFirebaseNotification(recipientId, data);
@@ -92,7 +59,6 @@ async function addFirebaseNotificationOnce(recipientId, deterministicId, data) {
 /**
  * Create notifications for assessment creation
  * PRIMARY: Firebase Firestore
- * BACKUP: MongoDB (optional)
  */
 async function notifyAssessmentCreated(assessment, course, teacherId, teacherFname, studentIds = []) {
   try {
@@ -133,7 +99,7 @@ async function notifyAssessmentCreated(assessment, course, teacherId, teacherFna
     }
     console.log(`✅ Teacher notification created`);
 
-    // 2. ✅ Notify registered students
+    // 2.  Notify registered students
     if (studentIds && studentIds.length > 0) {
       console.log(`   📝 Creating ${studentIds.length} student notifications...`);
       
@@ -169,7 +135,7 @@ async function notifyAssessmentCreated(assessment, course, teacherId, teacherFna
       console.log(`ℹ️ No students to notify`);
     }
 
-    // 3. ✅ Notify all admins
+    // 3. Notify all admins
     let adminCount = 0;
     try {
       const adminsSnapshot = await firestore.collection('users').where('role', '==', 'admin').get();

@@ -1,8 +1,3 @@
-/**
- * Quiz Generator Service
- * Generates quiz questions based on topics using the Groq API
- */
-
 import axios from 'axios';
 
 export interface QuizQuestion {

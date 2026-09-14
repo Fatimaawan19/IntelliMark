@@ -1,5 +1,6 @@
 const express = require("express");
 const submissionController = require("../controllers/submissionController");
+const ocrController = require("../controllers/ocrController");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
@@ -310,5 +311,11 @@ router.get("/file/:filename", (req, res) => {
     }
   });
 });
+
+/**
+ * OCR Routes - Per-submission image-to-text conversion
+ */
+router.post("/:submissionId/ocr", ocrController.ocrSubmissionImages);
+router.get("/:submissionId/ocr-status", ocrController.getOcrStatus);
 
 module.exports = router;

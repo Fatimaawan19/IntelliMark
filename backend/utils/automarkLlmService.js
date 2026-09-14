@@ -6,8 +6,6 @@ const { querySubmissionChunks } = require("./submissionRetrievalService");
 const { queryAssessmentReferenceChunks } = require("./assessmentReferenceRetrievalService");
 
 const OLLAMA_API_URL = process.env.OLLAMA_API_URL || "http://localhost:11434";
-// IMPORTANT: AutoMark must NEVER use the auto-generation model (OLLAMA_MODEL).
-// It must use its own model env var, otherwise it can accidentally run phi3:mini for marking.
 const OLLAMA_MODEL = process.env.AUTOMARK_OLLAMA_MODEL || "llama3:latest";
 const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || "5m";
 const { withExclusiveOllamaModel } = require("./ollamaModelManager");
@@ -39,7 +37,6 @@ const AUTOMARK_EXTRACTED_TEXT_CHAR_LIMIT =
 
 function evaluateTier3Decision({ confidence, hasStudentEvidence, awardedMarks, maxMarks }) {
   const reasons = [];
-  // New logic: minimize manual review. Only flag for review when confidence is very low.
   const tier3Threshold = Number(process.env.AUTOMARK_TIER3_CONFIDENCE_THRESHOLD || 30) || 30;
   if (Number.isFinite(confidence) && confidence < tier3Threshold) reasons.push("low_confidence");
 
@@ -60,13 +57,13 @@ function __dbg(location, message, data, hypothesisId) {
     timestamp: Date.now(),
   };
 
-  // Primary: send to debug ingest (may be unavailable in some environments)
+  // Primary: send to debug ingest endpoint for real-time monitoring in Groq Studio.
   fetch("http://127.0.0.1:7581/ingest/941c1564-77f4-42f2-9551-e2a5a14ad240", {
     method: "POST",
     headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "afcd7a" },
     body: JSON.stringify(payload),
   }).catch(() => {
-    // Fallback: append to local NDJSON file so we still get runtime evidence.
+    // Fallback: append to local NDJSON file .
     try {
       const fs = require("fs");
       const path = require("path");
@@ -410,7 +407,7 @@ function verifyMistakesAgainstExtractedText(mistakes, extractedText) {
       }
     }
 
-    // If no evidence can be found, drop it (prevents false positives).
+    
   }
   return out;
 }
@@ -438,13 +435,7 @@ function buildPerQuestionScoresFromReport(report) {
   });
 }
 
-/**
- * ========== MAIN FUNCTION — NOW GUARANTEES DATA PERSISTENCE ==========
- * 
- * Key change: Explicitly save SubmissionRaw AFTER all questions,
- * THEN update Submission. This ensures the report exists in the DB
- * before the model unloads.
- */
+
 async function automarkOneSubmission(subDoc, assessment, questions, jobId = null) {
   const assessmentId = String(assessment._id);
   const DEFAULT_MAX_MARKS_PER_QUESTION = Number(process.env.AUTOMARK_DEFAULT_MAX_MARKS || 10) || 10;
@@ -814,9 +805,7 @@ Output JSON schema (MUST match exactly):
     }
 
     // ===== TIER-2 FEEDBACK: one-sentence feedback + 1-5 mistakes =====
-    // For assignments: always.
-    // For quizzes: run when the answer isn't full marks (or confidence is low), so teachers get explanations.
-    // If this fails, keep feedback/mistakes empty (do not fail the whole grading).
+
     const shouldRunTier2 =
       Boolean(isAssignment) ||
       // For quizzes: if marks were deducted, always produce feedback (even if retrieval is weak).
@@ -851,11 +840,7 @@ ${referenceContext || "NO_REFERENCE_FOUND"}
 STUDENT SUBMISSION (evidence)
 ${studentContext || "NO_SUBMISSION_TEXT_FOUND"}
 
-STUDENT EXTRACTED TEXT (for exact spanStart/spanEnd highlighting)
-IMPORTANT:
-- If you include start_index/end_index, they MUST be character indices into THIS exact text block.
-- start_index is inclusive, end_index is exclusive.
-- The substring studentText[start_index:end_index] MUST exactly match text_span (after trimming) when start/end are provided.
+
 ${extractedTextForSpans ? extractedTextForSpans : "NO_EXTRACTED_TEXT_FOUND"}
 
 Output JSON schema (MUST match exactly):
@@ -923,9 +908,7 @@ Output JSON schema (MUST match exactly):
       }
     }
 
-    // ===== VERIFICATION LAYER: remove ungrounded mistakes =====
-    // Only keep mistakes we can confirm exist in the extracted student text.
-    // This reduces false positives (e.g., hallucinated issues not present in code).
+   // to avoid hallucinated mistakes
     try {
       mistakes = verifyMistakesAgainstExtractedText(Array.isArray(mistakes) ? mistakes : [], extractedTextForSpans).slice(0, 10);
     } catch {
@@ -966,7 +949,6 @@ Output JSON schema (MUST match exactly):
     confidenceCount += 1;
 
     // ===== PERSIST PROGRESS AFTER EACH QUESTION =====
-    // This is critical: save after each question so we don't lose data if the process crashes
     try {
       const perQuestionScoresSoFar = buildPerQuestionScoresFromReport(report);
       const updateResult = await SubmissionRaw.updateOne(

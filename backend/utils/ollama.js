@@ -2,15 +2,11 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const OLLAMA_API_URL = process.env.OLLAMA_API_URL || 'http://localhost:11434';
-// Auto-generation should stay on a fast, small local model (AutoMark uses its own model/env).
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'phi3:mini';
 const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '5m';
-// Question generation can be slow on CPU-only machines and/or larger models.
-// Keep this configurable to avoid false "connection" failures caused by timeouts.
-// Prefer OLLAMA_QGEN_TIMEOUT_MS; fall back to OLLAMA_REQUEST_TIMEOUT_MS for consistency with AutoMark.
 const TIMEOUT_MS = Number(process.env.OLLAMA_QGEN_TIMEOUT_MS || process.env.OLLAMA_REQUEST_TIMEOUT_MS || 600000) || 600000; // default 10 minutes
-const MAX_RETRIES = 3; // ✅ Try 3 times to get high-quality response
-const USE_NATURAL_LANGUAGE = true; // ✅ Use natural language for better performance
+const MAX_RETRIES = 3; //  Try 3 times to get high-quality response
+const USE_NATURAL_LANGUAGE = true; // Use natural language for better performance
 const { withExclusiveOllamaModel } = require('./ollamaModelManager');
 
 // #region agent log
@@ -31,7 +27,7 @@ function __dbg1b4653(location, message, data, hypothesisId, runId = 'pre-fix') {
 }
 // #endregion
 
-// ==================== DEDUP / DIVERSITY HELPERS ====================
+
 // When teacher requests 3+ questions, enforce "different questions" by detecting near-duplicates
 // and regenerating a few times.
 const DEDUPE_ENABLED = String(process.env.OLLAMA_QGEN_DEDUPE || 'true').toLowerCase() !== 'false';
@@ -103,7 +99,7 @@ function __qgenDbg(location, message, data, hypothesisId, runId = 'pre-fix') {
 }
 // #endregion
 
-// ✅ NEW: Build natural language prompt for better phi3:mini performance
+// Build natural language prompt for better phi3:mini performance
 function buildNaturalLanguagePrompt({ clos, courseTitle, questionType, questionCount, difficultyLevel, description = '', assessmentType = 'quiz' }) {
     let prompt = `You are an AI question generator. Generate ONLY valid JSON output.\n\n`;
     prompt += `Course: ${courseTitle}\n`;
@@ -263,7 +259,7 @@ function parseNaturalLanguageResponse(responseText, questionType, questionCount)
                 }
             }
             
-            // ✅ STRATEGY 1B: Try wrapping single object in array [...]
+    
             if (questions.length === 0 && jsonText.startsWith('{')) {
                 console.log(`      🎯 Trying single object wrapped in array...`);
                 try {
@@ -293,7 +289,6 @@ function parseNaturalLanguageResponse(responseText, questionType, questionCount)
                 }
             }
             
-            // ✅ STRATEGY 2: Try non-array JSON objects with proper bracket counting
             if (questions.length === 0) {
                 console.log(`      🎯 Trying non-array object format with bracket counting...`);
                 try {
@@ -418,7 +413,7 @@ function parseNaturalLanguageResponse(responseText, questionType, questionCount)
 }
 
 /**
- * ✅ NEW: Parse individual question from natural language text
+ *  Parse individual question from natural language text
  */
 function parseIndividualNLQuestion(questionText, questionType) {
     const lines = questionText.split('\n').map(l => l.trim()).filter(l => l);
@@ -437,7 +432,7 @@ function parseIndividualNLQuestion(questionText, questionType) {
         explanation: ''
     };
     
-    // ✅ IMPROVED: Find question text (all lines before options/answers)
+    // Find question text (all lines before options/answers)
     let optionsStartIdx = -1;
     for (let i = 0; i < lines.length; i++) {
         if (lines[i].match(/^[A-D]\s*[\)\:]/)) {
@@ -460,7 +455,7 @@ function parseIndividualNLQuestion(questionText, questionType) {
         result.questionText = lines.slice(0, optionsStartIdx).join(' ').trim();
     }
     
-    // ✅ IMPROVED: Parse MCQ options with more flexible patterns
+    //  Parse MCQ options with more flexible patterns
     if (questionType === 'mcq') {
         for (let j = 0; j < lines.length; j++) {
             // Match: "A) text", "A: text", "A. text", "A) - text"
@@ -474,7 +469,7 @@ function parseIndividualNLQuestion(questionText, questionType) {
             }
         }
         
-        // ✅ IMPROVED: Find correct answer with flexible patterns
+        // Find correct answer with flexible patterns
         for (let j = 0; j < lines.length; j++) {
             // Matches: "Correct Answer: A", "Answer: B", "Correct: C", etc.
             const answerMatch = lines[j].match(/(?:correct\s*)?(?:answer|ans)\s*[:=]?\s*(?:is\s+)?([A-D])/i);
@@ -489,7 +484,7 @@ function parseIndividualNLQuestion(questionText, questionType) {
             }
         }
         
-        // ✅ IMPROVED: Ensure exactly 4 options for MCQ
+        // Ensure exactly 4 options for MCQ
         while (result.options.length < 4) {
             result.options.push({
                 text: `Option ${String.fromCharCode(65 + result.options.length)}`,
@@ -541,7 +536,7 @@ function parseIndividualNLQuestion(questionText, questionType) {
 }
 
 /**
- * ✅ NEW: Generate questions using natural language approach (for assignments)
+ *  Generate questions using natural language approach (for assignments)
  */
 async function generateQuestionsNaturalLanguage({ clos, courseTitle, questionType = 'mcq', questionCount = 10, difficultyLevel = 'medium', description = '', assessmentType = 'quiz' }) {
     const startTime = Date.now();
@@ -742,11 +737,21 @@ const TYPE_MAP = {
     'coding': 'coding'
 };
 
-/**
- * ✅ SEQUENTIAL Generation - Generate questions ONE AT A TIME
- * More reliable for slow models like phi3:mini (60s per question)
- */
+// sequential generation across CLOs 
 async function generateQuestions({ clos, courseTitle, questionType = 'mcq', questionCount = 10, difficultyLevel = 'medium', description = '', assessmentType = 'quiz' }) {
+    //  Ensure questionCount is a number
+    const safeQuestionCount = Math.max(1, Number(questionCount) || 10);
+    const safeCLOCount = Math.max(1, clos?.length || 1);
+    
+    if (questionCount !== safeQuestionCount) {
+        console.warn(`⚠️  TYPE COERCION: questionCount "${questionCount}" (${typeof questionCount}) → ${safeQuestionCount}`);
+    }
+    
+    console.log(`\n✅ QUESTION GENERATION CONFIG:`);
+    console.log(`   Total Questions Requested: ${safeQuestionCount}`);
+    console.log(`   Total CLOs: ${safeCLOCount}`);
+    console.log(`   Per-CLO Target: ${Math.ceil(safeQuestionCount / safeCLOCount)}`);
+    
     return await withExclusiveOllamaModel(
         {
             purpose: 'generation',
@@ -754,22 +759,21 @@ async function generateQuestions({ clos, courseTitle, questionType = 'mcq', ques
             unloadModels: [process.env.AUTOMARK_OLLAMA_MODEL].filter(Boolean),
         },
         async () => {
-    // ✅ NEW: Use natural language for assignments (they're working great!)
-    // Use JSON for quizzes (keep existing flow)
+  
     if (assessmentType === 'assignment' && USE_NATURAL_LANGUAGE) {
         console.log(`\n📋 Using NATURAL LANGUAGE generation for assignment (phi3:mini performs better)\n`);
         return await generateQuestionsNaturalLanguage({
             clos,
             courseTitle,
             questionType,
-            questionCount,
+            questionCount: safeQuestionCount,
             difficultyLevel,
             description,
             assessmentType
         });
     }
 
-    // ✅ Original JSON approach for quizzes
+    //  Original JSON approach for quizzes
     const normalizedType = TYPE_MAP[questionType] || questionType;
     const startTime = Date.now();
 
@@ -822,7 +826,7 @@ async function generateQuestions({ clos, courseTitle, questionType = 'mcq', ques
     );
     // #endregion
 
-    // ✅ Check if Ollama is available before starting
+    // Check if Ollama is available before starting
     const ollamaOk = await testOllamaConnection();
     if (!ollamaOk) {
         console.error(`❌ Ollama is not running! Cannot generate questions.`);
@@ -836,22 +840,25 @@ async function generateQuestions({ clos, courseTitle, questionType = 'mcq', ques
 
     const allQuestions = [];
     const seenQuestionTexts = [];
-    const questionsPerCLO = Math.ceil(questionCount / clos.length);
+    const questionsPerCLO = Math.ceil(safeQuestionCount / safeCLOCount);
+
+    console.log(`\n📊 DISTRIBUTION: ${questionsPerCLO} questions/CLO × ${safeCLOCount} CLOs = ${questionsPerCLO * safeCLOCount} (target: ${safeQuestionCount})\n`);
 
     // Generate questions sequentially across CLOs
-    for (let cloIndex = 0; cloIndex < clos.length; cloIndex++) {
+    for (let cloIndex = 0; cloIndex < safeCLOCount; cloIndex++) {
         const clo = clos[cloIndex];
-        const questionsForThisCLO = Math.min(questionsPerCLO, questionCount - allQuestions.length);
+        const remaining = safeQuestionCount - allQuestions.length;
+        const questionsForThisCLO = Math.min(questionsPerCLO, remaining);
 
-        console.log(`\n📝 CLO ${cloIndex + 1}/${clos.length}: "${clo.description?.substring(0, 60)}..."`);
-        console.log(`   📊 Generating ${questionsForThisCLO} questions...`);
+        console.log(`\n📝 CLO ${cloIndex + 1}/${safeCLOCount}: "${clo.description?.substring(0, 60)}..."`);
+        console.log(`   📊 Target: ${questionsForThisCLO} questions (${allQuestions.length}/${safeQuestionCount} done, ${remaining} remaining)`);
 
         let questionsGeneratedForThisCLO = 0;
         for (let i = 0; i < questionsForThisCLO; i++) {
             const questionNumber = allQuestions.length + 1;
             const qStart = Date.now();
             
-            console.log(`   🎯 Question ${questionNumber}/${questionCount} (CLO ${cloIndex + 1}, attempt ${i + 1}/${questionsForThisCLO})`);
+            console.log(`   🎯 Question ${questionNumber}/${safeQuestionCount} (CLO ${cloIndex + 1}, attempt ${i + 1}/${questionsForThisCLO})`);
 
             try {
                 let question = await generateSingleQuestion({
@@ -890,11 +897,24 @@ async function generateQuestions({ clos, courseTitle, questionType = 'mcq', ques
                 seenQuestionTexts.push(question?.questionText || '');
                 questionsGeneratedForThisCLO++;
                 console.log(`   ✅ Generated successfully in ${qDuration}s`);
-                console.log(`      Generated: ${allQuestions.length}/${questionCount} total, ${questionsGeneratedForThisCLO}/${questionsForThisCLO} for this CLO`);
+                console.log(`      Generated: ${allQuestions.length}/${safeQuestionCount} total, ${questionsGeneratedForThisCLO}/${questionsForThisCLO} for this CLO`);
 
             } catch (error) {
                 const qDuration = ((Date.now() - qStart) / 1000).toFixed(1);
-                console.error(`   ❌ Failed after ${qDuration}s: ${error.message}`);
+                console.error(`\n❌ QUESTION GENERATION FAILED`);
+                console.error(`   Question ${questionNumber}/${safeQuestionCount} for CLO ${cloIndex + 1}/${safeCLOCount}`);
+                console.error(`   Duration: ${qDuration}s`);
+                console.error(`   Error: ${error.message}`);
+                
+                if (error.name === 'AbortError') {
+                    console.error(`   ⏱️  TIMEOUT: Model took >${TIMEOUT_MS/1000}s`);
+                    console.error(`   💡 FIX: Increase OLLAMA_QGEN_TIMEOUT_MS environment variable`);
+                } else if (error.message.includes('JSON')) {
+                    console.error(`   📄 JSON PARSING ERROR: Response was malformed`);
+                    console.error(`   💡 FIX: Check Ollama model output format`);
+                } else {
+                    console.error(`   🔍 ERROR TYPE: ${error.name}`);
+                }
 
                 // #region agent log
                 __qgenDbg(
@@ -906,16 +926,15 @@ async function generateQuestions({ clos, courseTitle, questionType = 'mcq', ques
                         errorName: error?.name,
                         errorMessage: String(error?.message || error).slice(0, 300),
                         durationSec: Number(qDuration),
-                        progress: `${allQuestions.length}/${questionCount}`,
+                        progress: `${allQuestions.length}/${safeQuestionCount}`,
+                        remaining: `${safeQuestionCount - allQuestions.length}`,
                     },
                     error?.name === 'AbortError' ? 'H1' : 'H2'
                 );
                 // #endregion
                 
-                if (error.name === 'AbortError') {
-                    console.error(`   ⏱️  Model took >${TIMEOUT_MS/1000}s - timeout exceeded`);
-                }
-                console.log(`   📊 Current progress: ${allQuestions.length}/${questionCount} questions generated`);
+                console.log(`   📊 Progress: ${allQuestions.length}/${safeQuestionCount} generated (${safeQuestionCount - allQuestions.length} remaining)`);
+                console.log(`   ⏭️  Continuing to next question...\n`);
                 // Continue to next question even if one fails
             }
         }
@@ -938,10 +957,17 @@ async function generateQuestions({ clos, courseTitle, questionType = 'mcq', ques
     console.log(`════════════════════════════════════════════════════════════`);
     
     if (allQuestions.length === 0) {
-        console.error(`❌ FAILED: No questions were generated!`);
+        console.error(`❌ CRITICAL: No questions were generated!`);
         console.error(`   Ollama URL: ${OLLAMA_API_URL}`);
         console.error(`   Model: ${OLLAMA_MODEL}`);
-        console.error(`   Timeout: ${TIMEOUT_MS / 1000}s per attempt`);
+        console.error(`   Timeout: ${TIMEOUT_MS / 1000}s per question`);
+        console.error(`   Requested: ${safeQuestionCount} questions`);
+        console.error(`   Generated: 0 questions`);
+        console.error(`\n💡 TROUBLESHOOTING:`);
+        console.error(`   1. Is Ollama running? Check: curl http://localhost:11434/api/tags`);
+        console.error(`   2. Is the model loaded? Run: ollama run ${OLLAMA_MODEL}`);
+        console.error(`   3. Increase timeout: set OLLAMA_QGEN_TIMEOUT_MS=600000`);
+        console.error(`   4. Check Ollama logs for errors`);
 
         // #region agent log
         __qgenDbg(
@@ -971,7 +997,7 @@ async function generateQuestions({ clos, courseTitle, questionType = 'mcq', ques
 }
 
 /**
- * ✅ Build batch prompt for generating multiple questions at once
+ * Build batch prompt for generating multiple questions at once
  */
 function buildBatchPrompt({ clos, courseTitle, questionType, questionCount, difficultyLevel, description = '', assessmentType = 'quiz' }) {
     const typeMap = {
@@ -1002,7 +1028,7 @@ function buildBatchPrompt({ clos, courseTitle, questionType, questionCount, diff
     prompt += `⚠️ CRITICAL: ALL ${questionCount} questions MUST be ${questionType.toUpperCase()} ONLY. NO MIXING TYPES.\n\n`;
     prompt += `Return a JSON array of exactly ${questionCount} questions. Each question MUST have this exact format:\n`;
     
-    // ✅ Different JSON format based on question type
+    //  Different JSON format based on question type
 
     switch(questionType) {
         case 'mcq':
@@ -1049,7 +1075,7 @@ function buildBatchPrompt({ clos, courseTitle, questionType, questionCount, diff
 }
 
 /**
- * ✅ Parse batch response containing multiple questions
+ *  Parse batch response containing multiple questions
  */
 function parseBatchResponse(responseText, questionType, clos) {
     try {
@@ -1149,7 +1175,7 @@ function parseBatchResponse(responseText, questionType, clos) {
 }
 
 /**
- * ✅ Generate a SINGLE question with timeout protection
+ *  Generate a SINGLE question with timeout protection
  * Used by sequential generation (one question at a time)
  */
 async function generateSingleQuestion({ clo, cloIndex, courseTitle, questionType, difficultyLevel, questionNumber, description = '', assessmentType = 'quiz', avoidQuestionTexts = [] }) {
@@ -1395,7 +1421,7 @@ async function generateSingleQuestion({ clo, cloIndex, courseTitle, questionType
  * SIMPLIFIED to help phi3:mini understand better
  */
 function buildSingleQuestionPrompt({ courseTitle, cloDescription, bloomLevel, questionType, difficultyLevel, questionNumber, description = '', assessmentType = 'quiz', avoidQuestionTexts = [] }) {
-    // ✅ IMPROVED: More explicit prompt with quality requirements
+    //  prompt with quality requirements
     let prompt = `You are an expert educational question generator. Create ONE high-quality ${questionType} question.\n\n`;
     prompt += `Course: ${courseTitle}\n`;
     prompt += `Topic: ${cloDescription}\n`;

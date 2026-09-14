@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tooltip as UITooltip, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import {
   ChevronLeft, Brain, Target, TrendingUp, AlertCircle, CheckCircle,
   BookOpen, FileText, Clock, Award, RefreshCw, ChevronRight,
@@ -16,8 +17,9 @@ import { auth, db } from "../../firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import { doc, getDoc, collection, getDocs, query, where, documentId } from "firebase/firestore";
 import axios from "axios";
+import { buildYouTubeQuery } from "../../utils/learningTopicHandler";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   ResponsiveContainer, Cell, LabelList,
   AreaChart, Area, ReferenceLine,
   PieChart, Pie, Legend,
@@ -27,6 +29,30 @@ const API = "http://localhost:5000/api";
 
 const pct = (grade: number, max: number) => max > 0 ? Math.round((grade / max) * 100) : 0;
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
+
+const getLectureFriendlyName = (fileName: string, courseCode?: string): string => {
+  const name = fileName.toLowerCase();
+  const code = courseCode?.toUpperCase() || "";
+
+  if (code.includes("CSC410") || code.includes("PP")) {
+    if (name.includes("chapter 1")) return "Chapter 1: Introduction to Ethics & Morality";
+    if (name.includes("chapter 2")) return "Chapter 2: Ethical Theories (Relativism, Utilitarianism)";
+    if (name.includes("chapter 3")) return "Chapter 3: Social Implications of Computing & Net Communications";
+    if (name.includes("chapter 4")) return "Chapter 4: Intellectual Property & Open Source Software";
+    if (name.includes("chapter 5")) return "Chapter 5: Information Privacy & Disclosures";
+    if (name.includes("chapter 6")) return "Chapter 6: Privacy & the Government";
+    if (name.includes("chapter 7")) return "Chapter 7: Computer Security & Hacking";
+    if (name.includes("chapter 8")) return "Chapter 8: Computer Reliability & Software Failures";
+    if (name.includes("chapter 9")) return "Chapter 9: Professional Ethics & Codes";
+  }
+  
+  if (name.includes("lecture 1")) return "Lecture 1: Introduction";
+  if (name.includes("lecture 2")) return "Lecture 2";
+  if (name.includes("lecture 3")) return "Lecture 3";
+  if (name.includes("lecture 4")) return "Lecture 4";
+  
+  return fileName;
+};
 
 const COURSE_COLORS = [
   "#2563eb", "#7c3aed", "#db2777", "#ea580c",
@@ -79,6 +105,47 @@ const Sparkline = ({ values }: { values: number[] }) => {
   );
 };
 
+const sanitizeToSecondPerson = (text: string): string => {
+  if (!text) return "";
+  let clean = text;
+  
+  // Handlers for verb transitions:
+  clean = clean.replace(/\b[Tt]he student struggled\b/g, "You struggled");
+  clean = clean.replace(/\b[Ss]tudent struggled\b/g, "You struggled");
+
+  // Verb agreement mappings:
+  const mappings = [
+    { from: /\b[Tt]he student struggles\b/g, to: "you struggle" },
+    { from: /\b[Ss]tudent struggles\b/g, to: "you struggle" },
+    { from: /\b[Tt]he student has\b/g, to: "you have" },
+    { from: /\b[Ss]tudent has\b/g, to: "you have" },
+    { from: /\b[Tt]he student is\b/g, to: "you are" },
+    { from: /\b[Ss]tudent is\b/g, to: "you are" },
+    { from: /\b[Tt]he student needs\b/g, to: "you need" },
+    { from: /\b[Ss]tudent needs\b/g, to: "you need" },
+    { from: /\b[Tt]he student wants\b/g, to: "you want" },
+    { from: /\b[Ss]tudent wants\b/g, to: "you want" },
+    { from: /\b[Tt]he student fails\b/g, to: "you fail" },
+    { from: /\b[Ss]tudent fails\b/g, to: "you fail" },
+    { from: /\b[Tt]he student performs\b/g, to: "you perform" },
+    { from: /\b[Ss]tudent performs\b/g, to: "you perform" },
+    { from: /\b[Tt]he student provides\b/g, to: "you provide" },
+    { from: /\b[Ss]tudent provides\b/g, to: "you provide" },
+    { from: /\b[Tt]he student shows\b/g, to: "you show" },
+    { from: /\b[Ss]tudent shows\b/g, to: "you show" },
+    { from: /\b[Tt]he student's\b/g, to: "your" },
+    { from: /\b[Ss]tudent's\b/g, to: "your" },
+    { from: /\b[Tt]he student\b/g, to: "you" },
+    { from: /\b[Ss]tudent\b/g, to: "you" }
+  ];
+
+  for (const m of mappings) {
+    clean = clean.replace(m.from, m.to);
+  }
+  
+  return clean;
+};
+
 // ── component ──────────────────────────────────────────────────────────────────
 const StudentFeedback = () => {
   const navigate = useNavigate();
@@ -105,10 +172,9 @@ const StudentFeedback = () => {
   const [riskData, setRiskData] = useState<any>(null);
   const [riskLoading, setRiskLoading] = useState(false);
   const riskFetchedRef = useRef<string | null>(null);
+  const [activeRiskMetric, setActiveRiskMetric] = useState<string>("nextScore");
 
   // Step 3 — Personalized Study Recommendations (data-driven from real weak CLOs)
-  // Aggregates weak CLOs (< 65%) across all enrolled courses, then attaches
-  // real YouTube + Google resources for each CLO's topic (the CLO description).
   const [weakCLOsResources, setWeakCLOsResources] = useState<any[]>([]);
   const [weakCLOsLoading, setWeakCLOsLoading] = useState(false);
   const weakCLOsFetchedRef = useRef<string | null>(null);
@@ -234,11 +300,17 @@ const StudentFeedback = () => {
     if (!activeCloCode || activeCloCode === "all") return null;
     return courseMap[activeCloCode]?.courseId
       || courses.find(c => c.code === activeCloCode || c.courseCode === activeCloCode)?.id
-      || null;
+      || (() => {
+        // Fallback: find a submission that references this courseCode and use its courseId
+        const sub = submissions.find(s => s.courseCode === activeCloCode && s.courseId);
+        if (!sub) return null;
+        const cid = typeof sub.courseId === 'string' ? sub.courseId : sub.courseId?._id?.toString?.() ?? String(sub.courseId ?? '');
+        return cid || null;
+      })();
   }, [activeCloCode, courseMap, courses]);
 
   // Fetch CLO performance when active CLO course or type filter changes.
-  // Auto-recalculates from submissions if no records exist yet.
+  // Auto-recalculates from submissions if no records exist yet with exponential backoff.
   useEffect(() => {
     if (!currentUser) { setCloPerf([]); return; }
     if (selectedCourse === "all") {
@@ -255,17 +327,33 @@ const StudentFeedback = () => {
       try {
         let url = `${API}/clo-performance/student/${encodeURIComponent(currentUser.uid)}/course/${activeCloCourseId}`;
         if (cloType !== "all") url += `/type/${cloType}`;
+        
         const { data } = await axios.get(url);
         let perf = Array.isArray(data?.performance) ? data.performance : [];
+        
+        // If no data, trigger recalculation with retry logic
         if (perf.length === 0) {
           try {
+            console.log("📊 Triggering CLO performance recalculation...");
             await axios.post(`${API}/clo-performance/recalculate/${encodeURIComponent(currentUser.uid)}/course/${activeCloCourseId}`);
-            const { data: refetched } = await axios.get(url);
-            perf = Array.isArray(refetched?.performance) ? refetched.performance : [];
-          } catch { /* ignore */ }
+            
+            // Wait a moment for async processing, then refetch with retry
+            let retries = 3;
+            let refetched = [];
+            while (retries > 0 && refetched.length === 0) {
+              await new Promise(resolve => setTimeout(resolve, 500));
+              const { data: retryData } = await axios.get(url);
+              refetched = Array.isArray(retryData?.performance) ? retryData.performance : [];
+              if (refetched.length > 0) break;
+              retries--;
+            }
+            perf = refetched;
+          } catch (err) {
+            console.warn("⚠️ Auto-recalculation failed:", err);
+          }
         }
-        // Fallback: fetch CLOs from Course collection and compute from submission grades.
-        // Triggered when assessments don't have cloIds linked, so recalculate returns empty.
+        
+        // Final fallback: compute from CLOs if still empty
         if (perf.length === 0) {
           try {
             const { data: courseData } = await axios.get(`${API}/courses/${activeCloCourseId}/clos`);
@@ -373,13 +461,117 @@ const StudentFeedback = () => {
       .sort((a, b) => b.value - a.value);
   }, [effectiveCloPerf]);
 
+  // ── Rule-Based Fallbacks for offline/missing LLM keys ───────────────────
+  const generateRuleBasedInsightsFallback = () => {
+    const trendLabel = improvementDelta == null ? "stable"
+      : improvementDelta > 0 ? "improving" : improvementDelta < 0 ? "declining" : "stable";
+
+    const strongTopics = [...topicData].filter(t => t.value >= 75).slice(0, 3).map(t => t.fullName || t.name);
+    const weakTopics = [...topicData].filter(t => t.value < 60).slice(0, 3).map(t => t.fullName || t.name);
+
+    let summary = `Your current overall grade average is ${avgGrade}%. `;
+    if (avgGrade >= 80) {
+      summary += "You are performing excellently across your assessments. Keep up the great work!";
+    } else if (avgGrade >= 60) {
+      summary += "You are showing steady progress, but there is room for improvement in some areas. Reviewing your common mistakes will help boost your grades.";
+    } else {
+      summary += "Your grades are currently low. We recommend focusing on your weak topics and seeking additional guidance from your instructors.";
+    }
+
+    return {
+      summary,
+      positiveKeywords: avgGrade >= 75 ? ["performing excellently", "great work", "steady progress"] : ["steady progress"],
+      negativeKeywords: avgGrade < 60 ? ["low", "room for improvement"] : ["room for improvement"],
+      strongTopics: strongTopics.length ? strongTopics : ["General Concepts"],
+      weakTopics: weakTopics.length ? weakTopics : ["No critical weak areas"],
+      trend: trendLabel,
+      riskLevel: avgGrade < 50 ? "high" : avgGrade < 70 ? "medium" : "low",
+      riskReasons: avgGrade < 50 ? ["Average grade is below 50%"] : ["Performance needs monitoring"],
+      nextAction: avgGrade < 50 ? "Schedule a tutoring session and review lectures." : "Review mistake logs and practice weak areas.",
+      improvementVelocity: improvementDelta ?? 0
+    };
+  };
+
+  const generateRuleBasedRiskFallback = () => {
+    const overallRisk = avgGrade < 50 ? "high" : avgGrade < 70 ? "medium" : "low";
+    const riskReasons = avgGrade < 50
+      ? ["Overall average is below 50%.", "Significant weak areas detected in course outcomes."]
+      : avgGrade < 70
+      ? ["Performance is in the average range, requiring moderate study adjustments.", "Some weaknesses in CLOs observed."]
+      : ["Good overall score average.", "Performing well across most assessed learning outcomes."];
+
+    const prediction = {
+      nextEstimate: avgGrade,
+      improvementProb: avgGrade >= 70 ? 80 : avgGrade >= 50 ? 60 : 40,
+      confidence: "medium",
+      failRisk: avgGrade < 50
+    };
+
+    const urgentAction = avgGrade < 50
+      ? "Seek instructor guidance, review weak CLOs, and complete all practice quizzes."
+      : avgGrade < 70
+      ? "Review mistakes from recent graded submissions and focus on weak topic resources."
+      : "Continue regular revision and maintain your current high-performing study routine.";
+
+    const riskTopics = [...topicData].sort((a, b) => a.value - b.value).slice(0, 3).map(topic => {
+      const riskScore = Math.max(0, 100 - topic.value);
+      return {
+        topic: topic.name,
+        riskScore,
+        riskLevel: riskScore >= 60 ? "high" : riskScore >= 35 ? "medium" : "low",
+        reason: `Student scored ${topic.value}% in assessments mapping to this outcome.`
+      };
+    });
+
+    const frequentMistakes = topMistakes.slice(0, 3).map(([m]) => m);
+
+    return {
+      riskTopics,
+      frequentMistakes,
+      overallRisk,
+      riskReasons,
+      prediction,
+      urgentAction
+    };
+  };
+
+  const generateRuleBasedWeakAreas = () => {
+    const allClosList = Object.values(allCloPerf).flat();
+    const weakClos = allClosList
+      .filter((c: any) => typeof c.percentage === "number" && c.percentage < 70)
+      .sort((a: any, b: any) => a.percentage - b.percentage);
+
+    if (weakClos.length === 0) {
+      const sorted = allClosList
+        .filter((c: any) => typeof c.percentage === "number")
+        .sort((a: any, b: any) => a.percentage - b.percentage);
+      if (sorted.length > 0) {
+        weakClos.push(sorted[0]);
+      }
+    }
+
+    return weakClos.slice(0, 3).map((clo: any) => ({
+      topic: clo.cloDescription || `CLO-${clo.cloNumber} Topics`,
+      courses: [clo.courseCode],
+      assessments: (clo.submissions ?? []).slice(0, 2).map((s: any) => s.assessmentTitle || "Assessment"),
+      frequency: (clo.submissions ?? []).length || 1,
+      severity: clo.percentage < 50 ? "high" : "medium",
+      reason: `Underperforming in CLO-${clo.cloNumber} (${clo.percentage}% average).`,
+      mappedCLO: `CLO-${clo.cloNumber}`
+    }));
+  };
+
   // ── Step 1: AI Learning Insights ─────────────────────────────────────────────
   // Builds a structured prompt from real student data, calls Groq (free tier),
   // and parses the JSON response into highlight-ready insight fields.
 
   const fetchAIInsights = async () => {
+    if (graded.length === 0) return;
     const GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY;
-    if (!GROQ_KEY || graded.length === 0) return;
+    if (!GROQ_KEY) {
+      setAiInsights(generateRuleBasedInsightsFallback());
+      return;
+    }
 
     setAiInsightsLoading(true);
     try {
@@ -403,6 +595,8 @@ const StudentFeedback = () => {
 
       const prompt = `You are a concise academic performance analyst for a university platform. Analyze the student data below and return ONLY a valid JSON object. No markdown, no code fences, no extra text whatsoever.
 
+IMPORTANT: Write all outputs, especially the "summary", "riskReasons", and "nextAction" fields, in the second person directly addressing the student (e.g., use 'you' / 'your' / 'yours' instead of 'the student' or 'student').
+
 STUDENT DATA:
 - Graded submissions: ${graded.length}
 - Overall average: ${avgGrade}%
@@ -412,17 +606,19 @@ STUDENT DATA:
 - CLO scores: ${cloSummary}
 - Last 5 scores (newest first): ${last5}
 
+If there is only 1 graded submission, evaluate performance based on this single data point. Set trend to stable, riskLevel based on that single grade (e.g. high if < 50, medium if < 70, low if >= 70), and explain key observations/strengths or focus areas.
+
 Return exactly this JSON structure (all fields required):
 {
-  "summary": "2-3 sentences of honest, student-friendly performance insight",
+  "summary": "2-3 sentences of honest, student-friendly performance insight written in the second person",
   "positiveKeywords": ["exact phrases from summary that describe strengths"],
   "negativeKeywords": ["exact phrases from summary that describe weaknesses"],
   "strongTopics": ["up to 3 strong topic names"],
   "weakTopics": ["up to 3 weak topic names"],
   "trend": "improving or stable or declining",
   "riskLevel": "low or medium or high",
-  "riskReasons": ["up to 2 short reasons"],
-  "nextAction": "single most important action to take now",
+  "riskReasons": ["up to 2 short reasons, written in the second person"],
+  "nextAction": "single most important action to take now, written in the second person",
   "improvementVelocity": 0
 }`;
 
@@ -443,8 +639,8 @@ Return exactly this JSON structure (all fields required):
       const parsed = JSON.parse(jsonStr);
       setAiInsights(parsed);
     } catch (e) {
-      // Fail silently — card will stay hidden rather than break the page
-      console.warn("AI Insights fetch failed:", e);
+      console.warn("AI Insights fetch failed, using fallback:", e);
+      setAiInsights(generateRuleBasedInsightsFallback());
     } finally {
       setAiInsightsLoading(false);
     }
@@ -514,14 +710,20 @@ Return exactly this JSON structure (all fields required):
   // pattern-recognition than the 8B used for Insights, better suited to
   // reading trajectories and classifying multi-factor risk.
   const fetchRiskAnalysis = async () => {
+    if (graded.length < 1) return;
     const GROQ_KEY = import.meta.env.VITE_GROQ_API_KEY;
-    if (!GROQ_KEY || graded.length < 2) return;
+    if (!GROQ_KEY) {
+      setRiskData(generateRuleBasedRiskFallback());
+      return;
+    }
 
     setRiskLoading(true);
     try {
       const cleanData = buildCleanStudentData();
 
       const prompt = `You are a university academic risk analyst. Given a student's complete, cleaned assessment history below, identify risk patterns and predict future performance.
+
+IMPORTANT: Write all explanations, reasons, and actions (especially the "reason" field under "riskTopics", "riskReasons", and "urgentAction") in the second person directly addressing the student (use 'you' / 'your' / 'yours' instead of 'the student' or 'student').
 
 CLEANED STUDENT DATA (JSON):
 ${JSON.stringify(cleanData)}
@@ -530,6 +732,8 @@ RISK SCORING RULES:
 - riskScore 70-100 → HIGH risk  (topic is a serious weak point)
 - riskScore 40-69  → MEDIUM risk (needs monitoring)
 - riskScore 0-39   → LOW risk   (performing adequately)
+
+If there is only 1 graded submission in the history, evaluate the risk based on that single grade, the mistakes, and any associated CLOs, and set the prediction confidence to "low" or "medium". Do not fail or refuse to predict; you must generate the prediction based on the single assessment.
 
 Consider these signals when classifying risk:
 1. Declining score trajectory (smoothed scores going down)
@@ -541,18 +745,18 @@ Consider these signals when classifying risk:
 Return ONLY this JSON — no markdown, no code fences, no extra text:
 {
   "riskTopics": [
-    { "topic": "string", "riskScore": 0, "riskLevel": "high|medium|low", "reason": "brief explanation" }
+    { "topic": "string", "riskScore": 0, "riskLevel": "high|medium|low", "reason": "brief explanation written in the second person" }
   ],
   "frequentMistakes": ["mistake phrase 1", "mistake phrase 2", "mistake phrase 3"],
   "overallRisk": "low|medium|high",
-  "riskReasons": ["reason 1", "reason 2"],
+  "riskReasons": ["reason 1 written in the second person", "reason 2 written in the second person"],
   "prediction": {
     "nextEstimate": 0,
     "improvementProb": 0,
     "confidence": "low|medium|high",
     "failRisk": false
   },
-  "urgentAction": "single most critical intervention right now"
+  "urgentAction": "single most critical intervention right now written in the second person"
 }`;
 
       const res = await axios.post(
@@ -560,7 +764,7 @@ Return ONLY this JSON — no markdown, no code fences, no extra text:
         {
           model:       "llama-3.3-70b-versatile",
           messages:    [{ role: "user", content: prompt }],
-          temperature: 0.2,   // low temp for deterministic risk scores
+          temperature: 0.2,   
           max_tokens:  700,
         },
         { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
@@ -570,15 +774,16 @@ Return ONLY this JSON — no markdown, no code fences, no extra text:
       const jsonStr = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
       setRiskData(JSON.parse(jsonStr));
     } catch (e) {
-      console.warn("Risk analysis fetch failed:", e);
+      console.warn("Risk analysis fetch failed, using fallback:", e);
+      setRiskData(generateRuleBasedRiskFallback());
     } finally {
       setRiskLoading(false);
     }
   };
 
-  // Trigger once per session after graded data is ready (same guard pattern as Insights)
+  // Trigger once per session after graded data is ready 
   useEffect(() => {
-    if (!currentUser || graded.length < 2 || loading) return;
+    if (!currentUser || graded.length < 1 || loading) return;
     const key = `risk__${currentUser.uid}__${graded.length}`;
     if (riskFetchedRef.current === key) return;
     riskFetchedRef.current = key;
@@ -598,40 +803,53 @@ Return ONLY this JSON — no markdown, no code fences, no extra text:
     const CSE_KEY  = import.meta.env.VITE_GOOGLE_CSE_KEY;
     const CSE_ID   = import.meta.env.VITE_GOOGLE_CSE_ID;
 
-    if (!GROQ_KEY) return;
-
     setWeakCLOsLoading(true);
     try {
-      // 1. Collect AI feedback + mistakes from every graded submission (last 15)
-      const feedbackBundle = [...graded]
-        .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
-        .slice(0, 15)
-        .map((s: any) => {
-          const fb = getFeedbackText(s);
-          const mistakes = getMistakes(s);
-          if (!fb && mistakes.length === 0) return null;
-          return {
-            course:     s.courseCode || "?",
-            courseName: s.courseName || s.courseCode || "?",
-            assessment: s.assessmentTitle || "Untitled",
-            type:       s.assessmentType || "assessment",
-            scorePct:   pct(Number(s.grade ?? 0), Number(s.maxGrade ?? 1)),
-            feedback:   fb.slice(0, 400),
-            mistakes:   mistakes.slice(0, 5),
-          };
-        })
-        .filter(Boolean);
+      let weakAreas: any[] = [];
 
-      if (feedbackBundle.length === 0) {
-        setWeakCLOsResources([]);
-        return;
-      }
+      if (GROQ_KEY) {
+        try {
+          // 1. Collect AI feedback + mistakes from every graded submission (last 15)
+          const feedbackBundle = [...graded]
+            .sort((a, b) => new Date(b.submittedAt).getTime() - new Date(a.submittedAt).getTime())
+            .slice(0, 15)
+            .map((s: any) => {
+              const fb = getFeedbackText(s);
+              const mistakes = getMistakes(s);
+              if (!fb && mistakes.length === 0) return null;
+              return {
+                course:     s.courseCode || "?",
+                courseName: s.courseName || s.courseCode || "?",
+                assessment: s.assessmentTitle || "Untitled",
+                type:       s.assessmentType || "assessment",
+                scorePct:   pct(Number(s.grade ?? 0), Number(s.maxGrade ?? 1)),
+                feedback:   fb.slice(0, 400),
+                mistakes:   mistakes.slice(0, 5),
+              };
+            })
+            .filter(Boolean);
 
-      // 2. Ask LLM to extract structured weak topic areas from the feedback corpus
-      const prompt = `You are an academic study advisor. Below are AI-generated grading feedback entries from a student's graded assessments across multiple courses. Identify the TOP 4–5 weak topic areas this student must focus on, drawing patterns from the feedback texts AND the mistakes lists.
+          if (feedbackBundle.length > 0) {
+            // 2. Ask LLM to extract structured weak topic areas from the feedback corpus
+            // Map courses to their CLOs from allCloPerf to pass into the prompt
+            const courseClosInfo: Record<string, string[]> = {};
+            Object.entries(courseMap).forEach(([code, info]) => {
+              const perf = allCloPerf[info.courseId];
+              if (Array.isArray(perf)) {
+                const clos = perf.map((p: any) => `${p.cloNumber || `CLO-${p.cloNumber ?? "?"}`}: ${p.cloDescription || ""}`);
+                courseClosInfo[code] = Array.from(new Set(clos));
+              }
+            });
+
+            const prompt = `You are an academic study advisor. Below are AI-generated grading feedback entries from a student's graded assessments across multiple courses. Identify the TOP 4–5 weak topic areas this student must focus on, drawing patterns from the feedback texts AND the mistakes lists.
+
+IMPORTANT: Write all explanation fields, especially the "reason" field, in the second person (e.g., use 'you' / 'your' / 'yours' to refer to the student, e.g. "You struggled to provide clear and precise definitions of probability distributions across multiple assessments in the DS-001 course." instead of "The student struggled to...").
 
 ASSESSMENT FEEDBACK DATA (JSON):
 ${JSON.stringify(feedbackBundle)}
+
+COURSE CLO DEFINITIONS (JSON):
+${JSON.stringify(courseClosInfo)}
 
 For each weak area extract:
 - topic            : a SPECIFIC, searchable subject name (e.g. "Recursion Base Cases", "SQL Inner Joins", "Stack vs Heap Memory") — NOT a generic phrase
@@ -639,42 +857,139 @@ For each weak area extract:
 - assessments      : array of 1–3 assessment titles where this weakness was flagged
 - frequency        : how many distinct assessments mentioned this weakness
 - severity         : "high" (frequent + low scores) | "medium" | "low"
-- reason           : ONE sentence explaining the pattern of mistakes/feedback that proves this is a weakness
+- reason           : ONE sentence explaining the pattern of mistakes/feedback that proves this is a weakness, written in the second person directly addressing the student (use 'you' / 'your' / 'yours')
+- mappedCLO        : the CLO identifier (e.g., "CLO-2") from the COURSE CLO DEFINITIONS that is most relevant to this weak topic area (or null if none match)
 
 Return ONLY valid JSON — no markdown, no code fences, no preamble:
 {
   "weakAreas": [
-    { "topic": "string", "courses": ["CSC354"], "assessments": ["Quiz 1"], "frequency": 2, "severity": "high|medium|low", "reason": "string" }
+    { "topic": "string", "courses": ["CSC354"], "assessments": ["Quiz 1"], "frequency": 2, "severity": "high|medium|low", "reason": "string", "mappedCLO": "CLO-2" }
   ]
 }`;
 
-      const res = await axios.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        {
-          model:       "llama-3.3-70b-versatile",
-          messages:    [{ role: "user", content: prompt }],
-          temperature: 0.3,
-          max_tokens:  900,
-        },
-        { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
-      );
+            const res = await axios.post(
+              "https://api.groq.com/openai/v1/chat/completions",
+              {
+                model:       "llama-3.3-70b-versatile",
+                messages:    [{ role: "user", content: prompt }],
+                temperature: 0.3,
+                max_tokens:  900,
+              },
+              { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
+            );
 
-      const raw     = res.data?.choices?.[0]?.message?.content ?? "";
-      const jsonStr = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
-      const parsed  = JSON.parse(jsonStr);
-      const weakAreas: any[] = (parsed.weakAreas ?? []).slice(0, 5);
+            const raw     = res.data?.choices?.[0]?.message?.content ?? "";
+            const jsonStr = raw.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+            const parsed  = JSON.parse(jsonStr);
+            weakAreas = (parsed.weakAreas ?? []).slice(0, 5);
+          }
+        } catch (err) {
+          console.warn("Groq weak areas extraction failed, using fallback:", err);
+        }
+      }
+
+      if (weakAreas.length === 0) {
+        // Fallback: Check if there's a low-performing CLO in the student's records to use as a focus area
+        const allClosList = Object.values(allCloPerf).flat();
+        const filteredClos = selectedCourse === "all" 
+          ? allClosList 
+          : allClosList.filter((c: any) => c.courseCode === selectedCourse || c.courseId === courseMap[selectedCourse]?.courseId);
+        
+        const lowPerfClo = [...filteredClos]
+          .filter((c: any) => typeof c.percentage === "number")
+          .sort((a: any, b: any) => a.percentage - b.percentage)[0];
+
+        if (lowPerfClo) {
+          // Ask LLM to extract a specific searchable topic using feedback from assessments under this CLO
+          const cloAssessments = Array.isArray(lowPerfClo.submissions) 
+            ? lowPerfClo.submissions.map((sub: any) => ({
+                title: sub.assessmentTitle || "Assessment",
+                grade: sub.marksObtained,
+                maxGrade: sub.marksAvailable,
+                feedback: sub.feedback || ""
+              }))
+            : [];
+
+          if (GROQ_KEY) {
+            const fallbackPrompt = `You are an academic study advisor. A student is underperforming in a specific Course Learning Outcome (CLO). Identify ONE specific searchable weak topic area that the student should focus on to improve. Use the assessment titles and student grading feedback below to isolate the specific weakness.
+
+IMPORTANT: Write all explanation fields, especially the "reason" field, in the second person (e.g., use 'you' / 'your' / 'yours' to refer to the student).
+
+CLO INFORMATION:
+- Course: ${lowPerfClo.courseName || lowPerfClo.courseCode} (${lowPerfClo.courseCode})
+- CLO Number: CLO-${lowPerfClo.cloNumber}
+- CLO Description: ${lowPerfClo.cloDescription}
+- CLO Score: ${lowPerfClo.percentage}%
+
+ASSESSMENTS & FEEDBACK under this CLO (JSON):
+${JSON.stringify(cloAssessments)}
+
+For this weak area extract:
+- topic            : a SPECIFIC, searchable subject name (e.g. "Recursion Base Cases", "SQL Inner Joins", "Stack vs Heap Memory") — NOT a generic phrase
+- courses          : [ "${lowPerfClo.courseCode}" ]
+- assessments      : array of 1–3 assessment titles under this CLO where the student struggled
+- frequency        : number of assessments analyzed
+- severity         : "high"
+- reason           : ONE sentence explaining why the student is struggling on this specific topic based on their feedback, written in the second person directly addressing the student (use 'you' / 'your' / 'yours')
+- mappedCLO        : "CLO-${lowPerfClo.cloNumber}"
+
+Return ONLY valid JSON — no markdown, no code fences, no preamble:
+{
+  "weakAreas": [
+    { "topic": "string", "courses": ["${lowPerfClo.courseCode}"], "assessments": ["Quiz 1"], "frequency": 1, "severity": "high", "reason": "string", "mappedCLO": "CLO-${lowPerfClo.cloNumber}" }
+  ]
+}`;
+
+            try {
+              const fallbackRes = await axios.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                {
+                  model:       "llama-3.3-70b-versatile",
+                  messages:    [{ role: "user", content: fallbackPrompt }],
+                  temperature: 0.3,
+                  max_tokens:  400,
+                },
+                { headers: { Authorization: `Bearer ${GROQ_KEY}`, "Content-Type": "application/json" } }
+              );
+
+              const fallbackRaw = fallbackRes.data?.choices?.[0]?.message?.content ?? "";
+              const fallbackJsonStr = fallbackRaw.replace(/```(?:json)?/gi, "").replace(/```/g, "").trim();
+              const fallbackParsed = JSON.parse(fallbackJsonStr);
+              weakAreas = (fallbackParsed.weakAreas ?? []).slice(0, 1);
+            } catch (err) {
+              console.warn("Groq fallback CLO weakness extraction failed:", err);
+            }
+          }
+        }
+      }
+
+      if (weakAreas.length === 0) {
+        weakAreas = generateRuleBasedWeakAreas();
+      }
 
       if (weakAreas.length === 0) {
         setWeakCLOsResources([]);
         return;
       }
 
-      // 3. For each AI-extracted topic, fetch real YouTube + Google resources
+      // 3. For each AI-extracted topic, fetch real YouTube + Google resources + local materials
       const results = await Promise.all(weakAreas.map(async (area: any) => {
         const query  = area.topic;
         const videos: any[] = [];
         const notes:  any[] = [];
+        const localMaterials: any[] = [];
 
+        const courseCode = area.courses?.[0];
+        const courseInfo = courseMap[courseCode];
+        const courseId   = courseInfo?.courseId;
+        const courseName = courseInfo?.courseName || courseCode || "";
+        
+        // Clean the course name (e.g. "Professional Practices" instead of "CSC410")
+        // as university codes like "CSC410" cause search engines to return 0 hits.
+        const cleanCourseName = courseName.replace(/csc\d+/gi, "").trim();
+        const refinedSearchQuery = `${cleanCourseName} ${query}`.trim();
+
+        // 3a. Query YouTube API dynamically
         if (YT_KEY) {
           try {
             const { data } = await axios.get(
@@ -682,9 +997,9 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
               {
                 params: {
                   part:              "snippet",
-                  q:                 `${query} lecture tutorial explained`,
+                  q:                 `${refinedSearchQuery} computer science explained`,
                   type:              "video",
-                  maxResults:        3,
+                  maxResults:        4,
                   videoDuration:     "medium",
                   relevanceLanguage: "en",
                   key:               YT_KEY,
@@ -692,25 +1007,28 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
               }
             );
             (data.items ?? []).forEach((v: any) => {
-              videos.push({
-                id:        v.id.videoId,
-                title:     v.snippet.title,
-                thumbnail: v.snippet.thumbnails?.medium?.url ?? "",
-                channel:   v.snippet.channelTitle,
-              });
+              if (v.id.videoId) {
+                videos.push({
+                  id:        v.id.videoId,
+                  title:     v.snippet.title,
+                  thumbnail: v.snippet.thumbnails?.medium?.url ?? `https://img.youtube.com/vi/${v.id.videoId}/mqdefault.jpg`,
+                  channel:   v.snippet.channelTitle,
+                });
+              }
             });
           } catch (e) {
             console.warn(`YouTube fetch failed for "${query}":`, e);
           }
         }
 
+        // 3b. Query Google Custom Search Engine dynamically
         if (CSE_KEY && CSE_ID) {
           try {
             const { data } = await axios.get(
               "https://www.googleapis.com/customsearch/v1",
               {
                 params: {
-                  q:   `${query} study notes lecture pdf`,
+                  q:   `${refinedSearchQuery} study notes lecture tutorial`,
                   key: CSE_KEY,
                   cx:  CSE_ID,
                   num: 4,
@@ -732,7 +1050,74 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
           }
         }
 
-        return { ...area, videos, notes };
+        // 3c. Fetch and Match Local Course Materials (Slides/PDFs)
+        if (courseId) {
+          try {
+            // Fetch the list of uploaded course materials
+            const materialsRes = await axios.get(`${API}/courses/materials-list/${courseId}`);
+            const courseMaterials = materialsRes.data?.materials || [];
+
+            // A. Query RAG vector database (FAISS) for matching chunks
+            let ragChunks: any[] = [];
+            try {
+              const contextRes = await axios.post(`${API}/courses/${courseId}/material-context`, {
+                query: `${area.topic} ${area.mappedCLO || ""}`,
+                topK: 4
+              });
+              if (contextRes.data?.success && Array.isArray(contextRes.data.results)) {
+                ragChunks = contextRes.data.results;
+              }
+            } catch (err) {
+              console.warn(`RAG query failed for topic "${query}":`, err);
+            }
+
+            // B. Map RAG matches to files and construct slide resources
+            if (ragChunks.length > 0) {
+              ragChunks.forEach((chunk: any) => {
+                const matId = chunk.metadata?.material_id || chunk.metadata?.materialId;
+                const fileName = chunk.metadata?.filename || chunk.metadata?.fileName;
+                const matchedMat = courseMaterials.find((m: any) => 
+                  (matId && String(m._id) === String(matId)) ||
+                  (fileName && m.originalFileName === fileName)
+                );
+
+                if (matchedMat) {
+                  if (!localMaterials.some(m => m.link === matchedMat.fileUrl)) {
+                    localMaterials.push({
+                      title: matchedMat.originalFileName,
+                      snippet: chunk.text || "Relevant slide chunk.",
+                      page: chunk.metadata?.page || chunk.metadata?.pageNumber || null,
+                      link: matchedMat.fileUrl,
+                      similarity: chunk.similarity
+                    });
+                  }
+                }
+              });
+            }
+
+            // C. Fallback: client-side keyword matching
+            if (localMaterials.length === 0 && courseMaterials.length > 0) {
+              const topicWords = `${area.topic} ${area.mappedCLO || ""}`.toLowerCase().split(/\s+/).filter(w => w.length > 3);
+              courseMaterials.forEach((m: any) => {
+                const fileNameLower = m.originalFileName.toLowerCase();
+                const matchedWords = topicWords.filter(w => fileNameLower.includes(w));
+                if (matchedWords.length > 0) {
+                  localMaterials.push({
+                    title: m.originalFileName,
+                    snippet: `Relevant course slide matching: "${matchedWords.join(", ")}"`,
+                    link: m.fileUrl,
+                    score: matchedWords.length
+                  });
+                }
+              });
+              localMaterials.sort((a, b) => (b.score || 0) - (a.score || 0));
+            }
+          } catch (e) {
+            console.warn(`Failed to fetch local materials for "${courseCode}":`, e);
+          }
+        }
+
+        return { ...area, videos, notes, materials: localMaterials };
       }));
 
       setWeakCLOsResources(results);
@@ -1050,7 +1435,7 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                             tickFormatter={v => `${v}%`}
                             width={42}
                           />
-                          <Tooltip cursor={{ fill: "rgba(255,255,255,0.05)" }}
+                          <RechartsTooltip cursor={{ fill: "rgba(255,255,255,0.05)" }}
                             content={({ active, payload, label }: any) => {
                               if (!active || !payload?.length) return null;
                               const row = courseAvgs.find((c: any) => c.code === label);
@@ -1160,7 +1545,7 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                             >
                               {cloDonutData.map((_, i) => <Cell key={i} fill={CLO_DONUT_COLORS[i % CLO_DONUT_COLORS.length]} />)}
                             </Pie>
-                            <Tooltip content={({ active, payload }: any) => {
+                            <RechartsTooltip content={({ active, payload }: any) => {
                               if (!active || !payload?.length) return null;
                               const d = payload[0]?.payload;
                               const color = CLO_DONUT_COLORS[cloDonutData.indexOf(d) % CLO_DONUT_COLORS.length];
@@ -1250,7 +1635,7 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                             tickFormatter={v => `${v}%`}
                             width={42}
                           />
-                          <Tooltip
+                          <RechartsTooltip
                             cursor={{ stroke: "#8b5cf6", strokeWidth: 1.5, strokeDasharray: "4 3" }}
                             content={({ active, payload }: any) => {
                               if (!active || !payload?.length) return null;
@@ -1366,7 +1751,7 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                           </div>
                           <p className="text-lg leading-relaxed text-foreground/90">
                             {highlightText(
-                              aiInsights.summary ?? "",
+                              sanitizeToSecondPerson(aiInsights.summary ?? ""),
                               aiInsights.positiveKeywords ?? [],
                               aiInsights.negativeKeywords ?? []
                             )}
@@ -1427,7 +1812,7 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                         {aiInsights.nextAction && (
                           <div className="flex items-start gap-2 p-4 rounded-lg border border-purple-500/20">
                             <Lightbulb className="h-5 w-5 text-purple-400 shrink-0 mt-0.5" />
-                            <p className="text-base text-muted-foreground leading-relaxed">{aiInsights.nextAction}</p>
+                            <p className="text-base text-muted-foreground leading-relaxed">{sanitizeToSecondPerson(aiInsights.nextAction)}</p>
                           </div>
                         )}
                       </>
@@ -1514,7 +1899,16 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                                 <div className="flex items-center justify-between gap-2">
                                   <div className="flex items-center gap-2.5 min-w-0">
                                     <span className={`inline-flex w-3.5 h-3.5 rounded-full shrink-0 ring-2 ${c.dot} ${c.ring}`} />
-                                    <span className="text-[13px] font-semibold text-foreground truncate" title={topic.fullName}>{topic.name}</span>
+                                    <UITooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="text-[13px] font-semibold text-foreground truncate hover:text-primary/80 transition-colors">
+                                          {topic.name}
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="right" className="max-w-xs break-words text-sm">
+                                        {topic.fullName}
+                                      </TooltipContent>
+                                    </UITooltip>
                                   </div>
                                   <span className={`text-[13px] font-extrabold shrink-0 ${c.text}`}>{riskScore}%</span>
                                 </div>
@@ -1556,8 +1950,8 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                           <div className="h-3 bg-muted/20 rounded w-3/5" />
                         </div>
                       ) : !riskData ? (
-                        graded.length < 2 ? (
-                          <p className="text-xs text-muted-foreground italic">Need at least 2 graded submissions to generate a prediction.</p>
+                        graded.length < 1 ? (
+                          <p className="text-xs text-muted-foreground italic">No graded submissions yet. Grade an assessment to generate a prediction.</p>
                         ) : (
                           <p className="text-xs text-muted-foreground italic">Generating AI risk prediction…</p>
                         )
@@ -1565,19 +1959,40 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                         <div className="space-y-3">
                           {/* Prediction stats strip */}
                           <div className="grid grid-cols-3 gap-2">
-                            <div className="flex flex-col items-center justify-center p-2.5 rounded-lg bg-muted/20 border border-border/60 text-center">
+                            <div 
+                              onClick={() => setActiveRiskMetric("nextScore")}
+                              className={`flex flex-col items-center justify-center p-2.5 rounded-lg border text-center cursor-pointer transition-all duration-250 hover:shadow-sm select-none ${
+                                activeRiskMetric === "nextScore"
+                                  ? "border-red-500/60 bg-red-500/10 shadow-sm ring-1 ring-red-500/30 scale-[1.02]"
+                                  : "border-border/60 bg-muted/20 hover:border-red-500/40 hover:bg-red-500/5"
+                              }`}
+                            >
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Next Score</span>
                               <span className={`text-lg font-extrabold leading-tight ${gradeColor(riskData.prediction?.nextEstimate ?? 0)}`}>
                                 {riskData.prediction?.nextEstimate ?? "—"}%
                               </span>
                             </div>
-                            <div className="flex flex-col items-center justify-center p-2.5 rounded-lg bg-muted/20 border border-border/60 text-center">
+                            <div 
+                              onClick={() => setActiveRiskMetric("improveProb")}
+                              className={`flex flex-col items-center justify-center p-2.5 rounded-lg border text-center cursor-pointer transition-all duration-250 hover:shadow-sm select-none ${
+                                activeRiskMetric === "improveProb"
+                                  ? "border-red-500/60 bg-red-500/10 shadow-sm ring-1 ring-red-500/30 scale-[1.02]"
+                                  : "border-border/60 bg-muted/20 hover:border-red-500/40 hover:bg-red-500/5"
+                              }`}
+                            >
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Improve Prob.</span>
                               <span className={`text-lg font-extrabold leading-tight ${(riskData.prediction?.improvementProb ?? 0) >= 50 ? "text-emerald-400" : "text-red-400"}`}>
                                 {riskData.prediction?.improvementProb ?? "—"}%
                               </span>
                             </div>
-                            <div className="flex flex-col items-center justify-center p-2.5 rounded-lg bg-muted/20 border border-border/60 text-center">
+                            <div 
+                              onClick={() => setActiveRiskMetric("failRisk")}
+                              className={`flex flex-col items-center justify-center p-2.5 rounded-lg border text-center cursor-pointer transition-all duration-250 hover:shadow-sm select-none ${
+                                activeRiskMetric === "failRisk"
+                                  ? "border-red-500/60 bg-red-500/10 shadow-sm ring-1 ring-red-500/30 scale-[1.02]"
+                                  : "border-border/60 bg-muted/20 hover:border-red-500/40 hover:bg-red-500/5"
+                              }`}
+                            >
                               <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-1">Fail Risk</span>
                               <span className={`text-lg font-extrabold leading-tight ${riskData.prediction?.failRisk ? "text-red-400" : "text-emerald-400"}`}>
                                 {riskData.prediction?.failRisk ? "Yes" : "No"}
@@ -1606,7 +2021,7 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                                           : "text-teal-300 border-teal-500/30"
                                         }`}>{rt.riskLevel}</Badge>
                                       </div>
-                                      {rt.reason && <p className="text-[11px] text-muted-foreground leading-snug mt-0.5 line-clamp-2">{rt.reason}</p>}
+                                      {rt.reason && <p className="text-[11px] text-muted-foreground leading-snug mt-0.5 line-clamp-2">{sanitizeToSecondPerson(rt.reason)}</p>}
                                     </div>
                                   </div>
                                 );
@@ -1618,7 +2033,7 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                           {riskData.urgentAction && (
                             <div className="flex items-start gap-2 p-2.5 rounded-lg border border-amber-500/25 bg-amber-500/10">
                               <Zap className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
-                              <p className="text-[12px] text-foreground/85 leading-relaxed">{riskData.urgentAction}</p>
+                              <p className="text-[12px] text-foreground/85 leading-relaxed">{sanitizeToSecondPerson(riskData.urgentAction)}</p>
                             </div>
                           )}
                         </div>
@@ -1759,6 +2174,7 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                       const c = sevColor(active.severity);
                       const hasVideos = active.videos?.length > 0;
                       const hasNotes  = active.notes?.length > 0;
+                      const hasMaterials = active.materials?.length > 0;
 
                       return (
                         <div className="space-y-6">
@@ -1775,13 +2191,37 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                                       {cc}
                                     </Badge>
                                   ))}
+                                  {active.mappedCLO && (
+                                    <Badge variant="outline" className="text-xs font-bold border-purple-500/40 text-purple-300 px-2.5 py-0.5 flex items-center gap-1">
+                                      <Sparkles className="h-3 w-3 animate-pulse" /> {active.mappedCLO}
+                                    </Badge>
+                                  )}
                                   <span className="text-sm text-muted-foreground font-medium">
                                     · flagged in {active.frequency ?? 1} assessment{(active.frequency ?? 1) > 1 ? "s" : ""}
                                   </span>
                                 </div>
                                 <p className="text-2xl font-extrabold text-foreground leading-tight mb-2">{active.topic || "—"}</p>
+                                
+                                {/* Mapped CLO Description */}
+                                {(() => {
+                                  const courseCode = active.courses?.[0];
+                                  const courseId = courseMap[courseCode]?.courseId;
+                                  const perf = allCloPerf[courseId];
+                                  const clo = perf?.find((p: any) => p.cloNumber === active.mappedCLO);
+                                  if (clo?.cloDescription) {
+                                    return (
+                                      <div className="text-sm text-muted-foreground mt-1 mb-2.5 flex items-center gap-1.5 bg-teal-500/5 border border-teal-500/10 rounded-lg px-3 py-1.5 w-fit">
+                                        <Target className="h-4 w-4 text-teal-400 shrink-0" />
+                                        <span className="font-bold text-teal-400">{active.mappedCLO}:</span>
+                                        <span className="text-foreground/90">{clo.cloDescription}</span>
+                                      </div>
+                                    );
+                                  }
+                                  return null;
+                                })()}
+
                                 {active.reason && (
-                                  <p className="text-base text-muted-foreground leading-relaxed">{active.reason}</p>
+                                  <p className="text-base text-muted-foreground leading-relaxed">{sanitizeToSecondPerson(active.reason)}</p>
                                 )}
                                 {(active.assessments ?? []).length > 0 && (
                                   <div className="flex flex-wrap gap-1.5 mt-3">
@@ -1801,11 +2241,65 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                           </div>
 
                           {/* No resources */}
-                          {!hasVideos && !hasNotes && (
+                          {!hasVideos && !hasNotes && !hasMaterials && (
                             <div className="flex flex-col items-center justify-center py-10 text-center">
                               <Search className="h-10 w-10 text-muted-foreground opacity-20 mb-3" />
                               <p className="text-base font-semibold text-muted-foreground">No resources found for this topic.</p>
                               <p className="text-sm text-muted-foreground mt-1">Check that your API keys are configured.</p>
+                            </div>
+                          )}
+
+                          {/* Course Slides & Materials */}
+                          {hasMaterials && (
+                            <div>
+                              <div className="flex items-center gap-2 mb-4">
+                                <div className="w-7 h-7 rounded-lg bg-teal-500/15 border border-teal-500/30 flex items-center justify-center">
+                                  <BookOpen className="h-4 w-4 text-teal-400" />
+                                </div>
+                                <p className="text-sm font-bold uppercase tracking-wider text-foreground">Course Slides &amp; Materials</p>
+                                <span className="text-xs font-semibold text-muted-foreground px-2 py-0.5 rounded-full bg-muted/40">{active.materials.length}</span>
+                              </div>
+                              <div className="space-y-2.5">
+                                {active.materials.map((m: any, i: number) => (
+                                  <a
+                                    key={i}
+                                    href={m.link}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="group flex items-start gap-3 p-3.5 rounded-xl border border-border hover:border-teal-500/40 hover:bg-teal-500/5 hover:shadow-md transition-all duration-150"
+                                  >
+                                    <div className="shrink-0 w-9 h-9 rounded-lg bg-teal-500/10 border border-teal-500/25 flex items-center justify-center">
+                                      <FileText className="h-4 w-4 text-teal-400" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <div className="flex flex-col gap-0.5 min-w-0">
+                                          <p className="text-base font-semibold text-foreground leading-snug truncate group-hover:text-teal-400 transition-colors">
+                                            {getLectureFriendlyName(m.title, active.courses?.[0])}
+                                          </p>
+                                          {getLectureFriendlyName(m.title, active.courses?.[0]) !== m.title && (
+                                            <span className="text-[11px] text-muted-foreground truncate font-mono">File: {m.title}</span>
+                                          )}
+                                        </div>
+                                        {m.page && (
+                                          <Badge variant="outline" className="text-[10px] font-bold border-teal-500/30 text-teal-300 px-1.5 py-0 shrink-0">
+                                            Slide Page {m.page}
+                                          </Badge>
+                                        )}
+                                        {m.similarity && (
+                                          <Badge variant="outline" className="text-[10px] font-bold border-emerald-500/30 text-emerald-300 px-1.5 py-0 ml-auto">
+                                            {Math.round(m.similarity * 100)}% match
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      <p className="text-sm text-muted-foreground mt-1.5 line-clamp-2 leading-relaxed italic">
+                                        "{m.snippet}"
+                                      </p>
+                                    </div>
+                                    <ExternalLink className="h-4 w-4 text-muted-foreground/50 shrink-0 mt-1 group-hover:text-teal-400 transition-colors" />
+                                  </a>
+                                ))}
+                              </div>
                             </div>
                           )}
 
@@ -1943,7 +2437,7 @@ Return ONLY valid JSON — no markdown, no code fences, no preamble:
                             <td className="px-4 py-3 whitespace-nowrap">
                               {row.isGraded && row.p !== null ? (
                                 <div className="flex items-center gap-2">
-                                  <span className="font-semibold text-foreground">{row.grade}/{row.maxGrade}</span>
+                                  <span className="font-semibold text-foreground">{Math.round(row.grade)}/{Math.round(row.maxGrade)}</span>
                                   <span className={`flex items-center gap-0.5 text-xs font-bold ${gradeColor(row.p)}`}>
                                     {row.trend === "improving" ? "▲" : row.trend === "needs_work" ? "▼" : ""}
                                     {row.p}%

@@ -1,4 +1,3 @@
-# FYP_Project
 # InteliMark 🎓
 
 **An intelligent, AI-powered course management and assessment system for educators and students.**

@@ -1,6 +1,3 @@
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 # InteliMark
 An Automatic quiz generation and marking system.
 =======
